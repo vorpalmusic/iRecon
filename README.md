@@ -51,3 +51,7 @@ No more wasting time typing repetitive Nmap commands or organizing reports manua
 ## 📸 Preview
 
 ![imagen](https://github.com/user-attachments/assets/04c5c804-669f-4714-9ab4-10453bf10659)
+
+
+https://github.com/user-attachments/assets/a98b0c4b-a0da-4168-81d3-2bc8c72cf709
+
