@@ -5,7 +5,7 @@ iRecon is an automated Nmap-based reconnaissance script designed to speed up the
 ## Installation
 Prerequisites
 ```bash
-sudo apt install nmap xsltproc python3 wget batcat firefox-esr -y
+sudo apt install nmap xsltproc python3 wget bat firefox-esr -y
 ```
 Installing the tool
 ```bash
