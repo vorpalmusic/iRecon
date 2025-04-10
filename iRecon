@@ -16,7 +16,7 @@ target="$1"
 figlet -f slant "iRecon" | lolcat
 
 echo -e "\n${yellow}[*]${end} ${purple}Scanning ports on${end} ${blue}$target${end}${purple}...${end}\n"
-nmap -p- --open -sS --min-rate 1000 -n -Pn -vvv "$target" -oG allPorts 2>/dev/null | grep "Discovered open port"
+sudo /usr/bin/nmap -p- --open -sS --min-rate 1000 -n -Pn -vvv "$target" -oG allPorts 2>/dev/null | grep "Discovered open port"
 
 ip_address="$target"
 ports=$(grep -oP '\d{1,5}/open' allPorts | cut -d '/' -f1 | xargs | tr ' ' ',')
