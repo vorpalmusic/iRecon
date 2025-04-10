@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# Author: Gzzcoo
+
 yellow="\e[33m"
 blue="\e[34m"
 gray="\e[90m"
