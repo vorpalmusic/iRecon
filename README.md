@@ -1,34 +1,37 @@
 iRecon 🧠⚡
+
 iRecon is an automated Nmap-based reconnaissance script designed to speed up the initial enumeration phase during CTFs or real-world pentests. It's especially useful for platforms like Hack The Box, where time and efficiency are key.
 
 🚀 Features
-Performs a full port scan (-p-) using Nmap to detect open ports.
 
-Automatically extracts open ports and copies them to your clipboard.
+  - Performs a full port scan (-p-) using Nmap to detect open ports.
 
-Detects service versions and runs basic reconnaissance scripts (-sCV) on discovered ports.
+  - Automatically extracts open ports and copies them to your clipboard.
 
-Generates a full Nmap XML report, transforms it into HTML, and opens it in your browser automatically.
+  - Detects service versions and runs basic reconnaissance scripts (-sCV) on discovered ports.
 
-Temporarily hosts the report using Python's HTTP server and releases the port right after.
+  - Generates a full Nmap XML report, transforms it into HTML, and opens it in your browser automatically.
 
-Clean, quiet execution with colored terminal output (if added to your .zshrc or bash script).
+  - Temporarily hosts the report using Python's HTTP server and releases the port right after.
+
+  - Clean, quiet execution with colored terminal output (if added to your .zshrc or bash script).
 
 📌 Why use iRecon?
-While iRecon runs in the background automating tedious steps, you can focus on exploring services, web apps, or other vectors in parallel. This workflow dramatically reduces downtime and boosts productivity during reconnaissance.
 
+While iRecon runs in the background automating tedious steps, you can focus on exploring services, web apps, or other vectors in parallel. This workflow dramatically reduces downtime and boosts productivity during reconnaissance.
 No more wasting time typing repetitive Nmap commands or organizing reports manually — iRecon takes care of it all, and your port 6969 stays clean and free afterward 😉
 
 🛠️ Perfect For
-Hack The Box
 
-TryHackMe
+  - Hack The Box
 
-Offensive Security Labs
+  - TryHackMe
 
-Red Team internal recon
+  - Offensive Security Labs
 
-Any scenario where speed and output clarity matter
+  - Red Team internal recon
+
+  - Any scenario where speed and output clarity matter
 
 📸 Preview
 
