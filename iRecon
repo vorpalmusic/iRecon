@@ -39,7 +39,7 @@ xsltproc targetedXML -o index.html
     python3 -m http.server 6969 &>/dev/null &
     server_pid=$!
     sleep 1
-    firefox http://127.0.0.1:6969/index.html &>/dev/null &
+    /usr/bin/firefox http://127.0.0.1:6969/index.html &>/dev/null &
     sleep 6
     kill "$server_pid" &>/dev/null
 ) &>/dev/null
