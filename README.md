@@ -1,8 +1,23 @@
-iRecon 🧠⚡
+# iRecon 🧠⚡
 
 iRecon is an automated Nmap-based reconnaissance script designed to speed up the initial enumeration phase during CTFs or real-world pentests. It's especially useful for platforms like Hack The Box, where time and efficiency are key.
 
-🚀 Features
+## Installation
+```bash
+  sudo apt install nmap xsltproc python3 wget -y
+```
+```bash
+  wget https://raw.githubusercontent.com/Gzzcoo/iRecon/refs/heads/main/iRecon
+  chmod +x iRecon
+  sudo mv iRecon /usr/local/bin/iRecon
+```
+
+## Usage
+```bash
+  iRecon <IP>
+```
+
+## 🚀 Features
 
   - Performs a full port scan (-p-) using Nmap to detect open ports.
 
@@ -16,12 +31,12 @@ iRecon is an automated Nmap-based reconnaissance script designed to speed up the
 
   - Clean, quiet execution with colored terminal output (if added to your .zshrc or bash script).
 
-📌 Why use iRecon?
+## 📌 Why use iRecon?
 
 While iRecon runs in the background automating tedious steps, you can focus on exploring services, web apps, or other vectors in parallel. This workflow dramatically reduces downtime and boosts productivity during reconnaissance.
 No more wasting time typing repetitive Nmap commands or organizing reports manually — iRecon takes care of it all, and your port 6969 stays clean and free afterward 😉
 
-🛠️ Perfect For
+## 🛠️ Perfect For
 
   - Hack The Box
 
@@ -33,6 +48,6 @@ No more wasting time typing repetitive Nmap commands or organizing reports manua
 
   - Any scenario where speed and output clarity matter
 
-📸 Preview
+## 📸 Preview
 
 ![imagen](https://github.com/user-attachments/assets/04c5c804-669f-4714-9ab4-10453bf10659)
