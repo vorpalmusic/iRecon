@@ -3,9 +3,11 @@
 iRecon is an automated Nmap-based reconnaissance script designed to speed up the initial enumeration phase during CTFs or real-world pentests. It's especially useful for platforms like Hack The Box, where time and efficiency are key.
 
 ## Installation
+Prerequisites
 ```bash
 sudo apt install nmap xsltproc python3 wget batcat firefox-esr -y
 ```
+Installing the tool
 ```bash
 wget https://raw.githubusercontent.com/Gzzcoo/iRecon/refs/heads/main/iRecon
 chmod +x iRecon
