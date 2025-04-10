@@ -4,17 +4,17 @@ iRecon is an automated Nmap-based reconnaissance script designed to speed up the
 
 ## Installation
 ```bash
-  sudo apt install nmap xsltproc python3 wget -y
+sudo apt install nmap xsltproc python3 wget -y
 ```
 ```bash
-  wget https://raw.githubusercontent.com/Gzzcoo/iRecon/refs/heads/main/iRecon
-  chmod +x iRecon
-  sudo mv iRecon /usr/local/bin/iRecon
+wget https://raw.githubusercontent.com/Gzzcoo/iRecon/refs/heads/main/iRecon
+chmod +x iRecon
+sudo mv iRecon /usr/local/bin/iRecon
 ```
 
 ## Usage
 ```bash
-  iRecon <IP>
+iRecon <IP>
 ```
 
 ## 🚀 Features
