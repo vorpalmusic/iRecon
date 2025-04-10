@@ -1,0 +1,45 @@
+#!/bin/bash
+
+yellow="\e[33m"
+blue="\e[34m"
+gray="\e[90m"
+end="\e[0m"
+purple="\e[0;35m\033[1m"
+
+if [ -z "$1" ]; then
+    echo -e "\n${yellow}[!]${end} ${purple}Usage:${end} ${blue}$0 <IP>${end}"
+    exit 1
+fi
+
+target="$1"
+
+figlet -f slant "iRecon" | lolcat
+
+echo -e "\n${yellow}[*]${end} ${purple}Scanning ports on${end} ${blue}$target${end}${purple}...${end}\n"
+nmap -p- --open -sS --min-rate 1000 -n -Pn -vvv "$target" -oG allPorts 2>/dev/null | grep "Discovered open port"
+
+ip_address="$target"
+ports=$(grep -oP '\d{1,5}/open' allPorts | cut -d '/' -f1 | xargs | tr ' ' ',')
+
+echo -e "\n${yellow}[*]${end} ${purple}Extracting information...${end}\n" > extractPorts.tmp
+echo -e "\t${yellow}[*]${end} ${purple}IP Address:${end} ${blue}$ip_address${end}" >> extractPorts.tmp
+echo -e "\t${yellow}[*]${end} ${purple}Open ports:${end} ${blue}$ports${end}\n" >> extractPorts.tmp
+echo "$ports" | tr -d '\n' | xclip -sel clip
+echo -e "${yellow}[*]${end} ${purple}Ports copied to clipboard${end}" >> extractPorts.tmp
+/usr/bin/batcat --style=plain --paging=never extractPorts.tmp
+rm extractPorts.tmp
+
+echo -e "\n${yellow}[*]${end} ${purple}Version and Service Scanning...${end}"
+nmap -sCV -p"$ports" "$ip_address" -A -oN targeted -oX targetedXML &>/dev/null
+
+echo -e "\n${yellow}[*]${end} ${purple}Generating HTML Report and opening with the browser...${end}"
+xsltproc targetedXML -o index.html
+
+(
+    python3 -m http.server 6969 &>/dev/null &
+    server_pid=$!
+    sleep 1
+    firefox http://127.0.0.1:6969/index.html &>/dev/null &
+    sleep 6
+    kill "$server_pid" &>/dev/null
+) &>/dev/null
