@@ -16,13 +16,15 @@ fi
 target="$1"
 
 figlet -f slant "iRecon" | lolcat
-mkdir iRecon  ## create subfolder to store created files
+
+## Make an output directory called 'recon' if it is not already there
+mkdir -p recon  ## create subfolder to store created files
 
 echo -e "\n${yellow}[*]${end} ${purple}Scanning ports on${end} ${blue}$target${end}${purple}...${end}\n"
-sudo /usr/bin/nmap -p- --open -sS --min-rate 1000 -n -Pn -vvv "$target" -oG iRecon/allPorts 2>/dev/null | grep "Discovered open port"
+sudo /usr/bin/nmap -p- --open -sS --min-rate 1000 -n -Pn -vvv "$target" -oG recon/allPorts 2>/dev/null | grep "Discovered open port"
 
 ip_address="$target"
-ports=$(grep -oP '\d{1,5}/open' iRecon/allPorts | cut -d '/' -f1 | xargs | tr ' ' ',')
+ports=$(grep -oP '\d{1,5}/open' recon/allPorts | cut -d '/' -f1 | xargs | tr ' ' ',')
 
 echo -e "\n${yellow}[*]${end} ${purple}Extracting information...${end}\n" > extractPorts.tmp
 echo -e "\t${yellow}[*]${end} ${purple}IP Address:${end} ${blue}$ip_address${end}" >> extractPorts.tmp
@@ -33,16 +35,16 @@ echo -e "${yellow}[*]${end} ${purple}Ports copied to clipboard${end}" >> extract
 rm extractPorts.tmp
 
 echo -e "\n${yellow}[*]${end} ${purple}Version and Service Scanning...${end}"
-nmap -sCV -p"$ports" "$ip_address" -A -oN iRecon/targeted -oX iRecon/targetedXML &>/dev/null
+nmap -sCV -p"$ports" "$ip_address" -A -oN recon/targeted -oX iRecon/targetedXML &>/dev/null
 
 echo -e "\n${yellow}[*]${end} ${purple}Generating HTML Report and opening with the browser...${end}"
-xsltproc iRecon/targetedXML -o iRecon/index.html
+xsltproc recon/targetedXML -o recon/index.html
 
 (
     python3 -m http.server 6969 &>/dev/null &
     server_pid=$!
     sleep 1
-    /usr/bin/firefox http://127.0.0.1:6969/iRecon/index.html &>/dev/null &
+    /usr/bin/firefox http://127.0.0.1:6969/recon/index.html &>/dev/null &
     sleep 6
     kill "$server_pid" &>/dev/null
 ) &>/dev/null
