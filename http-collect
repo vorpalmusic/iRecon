@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# http-collect  — conservative HTTP artifact collector using curl, openssl, and whatweb
+# Usage:
+#   http-collect OUTDIR IP PORT
+# Example:
+#   http-collect ./recon 10.129.6.176 80
+set -euo pipefail
+
+OUTDIR="${1:-}"
+IP="${2:-}"
+PORT="${3:-}"
+
+if [ -z "$OUTDIR" ] || [ -z "$IP" ] || [ -z "$PORT" ]; then
+  echo "Usage: $0 OUTDIR IP PORT" >&2
+  exit 2
+fi
+
+DEST="$OUTDIR/http/$PORT"
+mkdir -p "$DEST"
+
+# Timeouts (seconds)
+CURL_HEAD_TIMEOUT=8
+CURL_BODY_TIMEOUT=12
+CERT_TIMEOUT=4
+
+# 1) headers (fast)
+curl -sS -I --max-time "$CURL_HEAD_TIMEOUT" "http://$IP:$PORT/" -D "$DEST/headers.txt" 2>/dev/null || true
+
+# 2) body (follow redirects, browser UA)
+curl -sL --max-time "$CURL_BODY_TIMEOUT" --user-agent "Mozilla/5.0 (Recon)" "http://$IP:$PORT/" -o "$DEST/body.html" 2>/dev/null || true
+
+# page title / fallback heading
+title="$(tr -d '\r\n' < "$DEST/body.html" | grep -ioP '(?<=<title>).*?(?=</title>)' | head -n1)"
+if [ -z "$title" ]; then
+  title="$(tr -d '\r\n' < "$DEST/body.html" | grep -ioP '(?<=<h1>).*?(?=</h1>)' | head -n1)"
+fi
+if [ -z "$title" ]; then
+  title="$(tr -d '\r\n' < "$DEST/body.html" | grep -ioP '(?<=<h2>).*?(?=</h2>)' | head -n1)"
+fi
+printf "%s\n" "${title:-<no title>}" > "$DEST/title.txt" || true
+
+# 3) extract absolute hostnames from body (hosts_from_body.txt)
+#    - absolute URLs only (http/https), then strip protocol and path
+grep -Eo 'https?://[^"'"'"' >]+' "$DEST/body.html" 2>/dev/null | sed -E 's#https?://##I' | cut -d/ -f1 | sort -u > "$DEST/hosts_from_body.txt" || true
+
+# 4) extract obvious emails from body (emails.txt)
+grep -Eoi "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}" "$DEST/body.html" 2>/dev/null | sort -u > "$DEST/emails.txt" || true
+
+# --- minimal extra pages: /contact and /about (no spider) ---
+for extra in contact about; do
+  curl -sL --max-time 8 --user-agent "Mozilla/5.0 (Recon)" \
+    "http://$IP:$PORT/$extra" -o "$DEST/$extra.html" 2>/dev/null || true
+  # extract emails from each extra page and append to emails.txt
+  grep -Eoi "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}" "$DEST/$extra.html" 2>/dev/null \
+    >> "$DEST/emails.txt" || true
+done
+# dedupe emails.txt
+if [ -s "$DEST/emails.txt" ]; then
+  sort -u "$DEST/emails.txt" -o "$DEST/emails.txt"
+fi
+
+# 5) robots/sitemap
+curl -sS --max-time 6 "http://$IP:$PORT/robots.txt" -o "$DEST/robots.txt" 2>/dev/null || true
+curl -sS --max-time 6 "http://$IP:$PORT/sitemap.xml" -o "$DEST/sitemap.xml" 2>/dev/null || true
+
+# 6) favicon + hash (useful for asset correlation)
+curl -sS --max-time 6 "http://$IP:$PORT/favicon.ico" -o "$DEST/favicon.ico" 2>/dev/null || true
+if [ -f "$DEST/favicon.ico" ]; then
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - <<PY > "$DEST/favicon.md5" 2>/dev/null || true
+import hashlib
+print(hashlib.md5(open('$DEST/favicon.ico','rb').read()).hexdigest())
+PY
+  else
+    md5sum "$DEST/favicon.ico" 2>/dev/null | awk '{print $1}' > "$DEST/favicon.md5" || true
+  fi
+fi
+
+# 7) cert grab (best-effort; wrapped in timeout)
+timeout "$CERT_TIMEOUT" bash -c "echo | openssl s_client -connect $IP:$PORT -servername $IP 2>/dev/null" | \
+  openssl x509 -noout -text > "$DEST/cert.txt" 2>/dev/null || true
+
+# 8) whatweb fingerprint (if installed)
+if command -v whatweb >/dev/null 2>&1; then
+  whatweb -v "http://$IP:$PORT/" > "$DEST/whatweb.txt" 2>&1 || true
+else
+  printf "[info] whatweb not installed; skipping\n" > "$DEST/whatweb.txt"
+fi
+
+# 9) quick parsed summary file (one-line each): hosts found, emails found
+{
+  echo "hosts_from_body:"
+  sed -n '1,200p' "$DEST/hosts_from_body.txt" 2>/dev/null || true
+  echo
+  echo "emails:"
+  sed -n '1,200p' "$DEST/emails.txt" 2>/dev/null || true
+} > "$DEST/summary.txt"
+
+# Friendly short output for caller
+echo "collected:$DEST"
+[ -s "$DEST/hosts_from_body.txt" ] && echo "hosts_from_body: $(wc -l < "$DEST/hosts_from_body.txt" 2>/dev/null || true)"
+[ -s "$DEST/emails.txt" ] && echo "emails: $(wc -l < "$DEST/emails.txt" 2>/dev/null || true)"
+[ -s "$DEST/headers.txt" ] && echo "headers saved"
+[ -s "$DEST/body.html" ] && echo "body saved (bytes: $(stat -c%s "$DEST/body.html" 2>/dev/null || echo 0))"
+[ -s "$DEST/cert.txt" ] && echo "cert saved"
+[ -s "$DEST/whatweb.txt" ] && echo "whatweb saved"
