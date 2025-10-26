@@ -92,21 +92,20 @@ echo "$found_hosts" | sed '/^$/d' | while IFS= read -r h; do
   echo -e "   ${blue}$h${end}"
 done
 # optionally feed found_hosts into add-hosts (dry-run first)
-$SCRIPTDIR/add-hosts "$OUTDIR" "$IP" "$(echo "$found_hosts" | paste -s -d, -)" --dry-run
-
+$SCRIPTDIR/add-hosts "$OUTDIR" "$IP" "$(echo "$found_hosts" | paste -s -d, -)"
 
 # Preview what would be added (dry-run)
 preview="$("$SCRIPTDIR/add-hosts" "$OUTDIR" "$IP" "${HTTP_VERIFIED:-}" --dry-run 2>/dev/null || true)"
 if [ -n "$preview" ]; then
-  echo -e "${yellow}[*]${end} ${purple}Hosts that would be added to /etc/hosts:${end}"
+  echo -e "${yellow}[*]${end} ${purple}Hosts added to /etc/hosts:${end}"
   echo "$preview" | while IFS= read -r ln; do
     [ -z "$ln" ] && continue
     ip="${ln%% *}"; host="${ln#* }"
     echo -e "   ${blue}${ip}${end}  ${purple}${host}${end}"
   done
-  # apply for real (single sudo prompt) — uncomment if you want automatic apply:
-  # added="$(sudo bash ./add-hosts "$OUTDIR" "$IP" "${HTTP_VERIFIED:-}")"
-  # echo "$added"
+  # apply
+  added="$(sudo bash "$SCRIPTDIR/add-hosts" "$OUTDIR" "$IP" "${HTTP_VERIFIED:-}")"
+  echo "$added"
 else
   echo -e "${yellow}[*]${end} ${purple}No new /etc/hosts entries needed.${end}"
 fi
