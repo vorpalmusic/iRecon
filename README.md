@@ -1,3 +1,5 @@
+MANY CHANGES MADE: README TBD
+
 # iRecon 🧠⚡
 
 iRecon is an automated Nmap-based reconnaissance script designed to speed up the initial enumeration phase during CTFs or real-world pentests. It's especially useful for platforms like Hack The Box, where time and efficiency are key.
