@@ -16,6 +16,7 @@ fi
 target="$1"
 
 # Ensure we always use absolute paths (based on the current working directory)
+SCRIPTDIR="$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")" >/dev/null 2>&1 && pwd)" # to generate path to helpers
 BASEDIR="$(pwd)"			# the directory you ran the script from
 OUTDIR="${BASEDIR}/$target"		# absolute path to recon folder
 mkdir -p "$OUTDIR"			# create if missing
@@ -44,7 +45,7 @@ echo -e "\n${yellow}[*]${end} ${purple}Version and Service Scanning...${end}"
 nmap -sCV -p"$ports" -n -Pn --max-retries 2 --host-timeout 30s "$IP" -A -oN "$OUTDIR/targeted" -oX "$OUTDIR/targetedXML" >/dev/null 2>&1
 
 ### http-detect
-eval "$(./http-detect "$OUTDIR" "$IP")"
+eval "$("$SCRIPTDIR/http-detect" "$OUTDIR" "$IP")"
 echo -e "${yellow}[*]${end} ${purple}HTTP candidates:${end} ${blue}${HTTP_CAND:-<none>}${end}"
 echo -e "${yellow}[*]${end} ${purple}Verified HTTP ports:${end} ${blue}${HTTP_VERIFIED:-<none>}${end}"
 
@@ -57,7 +58,7 @@ if [ -n "${HTTP_VERIFIED:-}" ]; then
     [ -z "$p" ] && continue
     # call http-collect (no sudo); it expects OUTDIR IP PORT
     # ignore failures so iRecon continues
-    ./http-collect "$OUTDIR" "$IP" "$p" >/dev/null 2>&1 || true
+    $SCRIPTDIR/http-collect "$OUTDIR" "$IP" "$p" >/dev/null 2>&1 || true
   done
 fi
 # --- end collection ---
@@ -85,17 +86,17 @@ rm -f "$emails_tmp"
 # prefer the hostname if present; else pass the IP
 target_hint="${HTTP_CAND:-$IP}"
 # produce candidate hosts silently (no heavy OSINT)
-found_hosts="$(./passive-enrich "$OUTDIR" "$target_hint" --max 200)"
+found_hosts="$("$SCRIPTDIR/passive-enrich" "$OUTDIR" "$target_hint" --max 200)"
 echo -e "${yellow}[*]${end} ${purple}Passive hosts found:${end}"
 echo "$found_hosts" | sed '/^$/d' | while IFS= read -r h; do
   echo -e "   ${blue}$h${end}"
 done
 # optionally feed found_hosts into add-hosts (dry-run first)
-./add-hosts "$OUTDIR" "$IP" "$(echo "$found_hosts" | paste -s -d, -)" --dry-run
+$SCRIPTDIR/add-hosts "$OUTDIR" "$IP" "$(echo "$found_hosts" | paste -s -d, -)" --dry-run
 
 
 # Preview what would be added (dry-run)
-preview="$(./add-hosts "$OUTDIR" "$IP" "${HTTP_VERIFIED:-}" --dry-run 2>/dev/null || true)"
+preview="$("$SCRIPTDIR/add-hosts" "$OUTDIR" "$IP" "${HTTP_VERIFIED:-}" --dry-run 2>/dev/null || true)"
 if [ -n "$preview" ]; then
   echo -e "${yellow}[*]${end} ${purple}Hosts that would be added to /etc/hosts:${end}"
   echo "$preview" | while IFS= read -r ln; do
