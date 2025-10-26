@@ -1,4 +1,8 @@
-MANY CHANGES MADE: README TBD
+MOST DETAILS TBD
+
+This began as a fork of iRecon but only in a few days has far outgrown the original project, which may not even be actively maintained any more, so I removed the connection. Find the original repo here--this little script inspired the current work: https://github.com/gzzcoo/iRecon
+
+the README will be totally reworked to reflect the current project soon.
 
 # iRecon 🧠⚡
 
@@ -42,20 +46,6 @@ No more wasting time typing repetitive Nmap commands or organizing reports manua
 
 ## 🛠️ Perfect For
 
-  - Hack The Box
-
-  - TryHackMe
-
-  - Offensive Security Labs
-
-  - Red Team internal recon
-
-  - Any scenario where speed and output clarity matter
-
+ 
 ## 📸 Preview
-
-![imagen](https://github.com/user-attachments/assets/04c5c804-669f-4714-9ab4-10453bf10659)
-
-
-https://github.com/user-attachments/assets/a98b0c4b-a0da-4168-81d3-2bc8c72cf709
 
