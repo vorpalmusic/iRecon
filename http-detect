@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# http-detect  (quiet-by-default; -v prints diagnostics to stderr)
+set -u
+
+VERBOSE=0
+if [[ "${1:-}" == "-v" || "${1:-}" == "--verbose" ]]; then
+  VERBOSE=1
+  shift
+fi
+
+OUTDIR="${1:-}"
+IP="${2:-}"
+PORTS_ARG="${3:-}"   # optional: probe-mode
+
+if [ -z "$OUTDIR" ] || [ -z "$IP" ]; then
+  echo "Usage: $0 [-v] OUTDIR IP [PORTS]" >&2
+  exit 2
+fi
+
+xml_file="$OUTDIR/targetedXML"
+txt_file="$OUTDIR/targeted"
+
+HTTP_CAND=""
+HTTP_VERIFIED=""
+
+probe_ports() {
+  local ip="$1" portlist="$2"
+  local -a arr verified=()
+  portlist="${portlist//,/ }"
+  read -r -a arr <<< "$portlist"
+  for p in "${arr[@]}"; do
+    p="${p//[^0-9]/}"
+    [ -z "$p" ] && continue
+    if curl -Is --max-time 3 "http://$ip:$p/" >/dev/null 2>&1 \
+    || curl -kIs --max-time 3 "https://$ip:$p/" >/dev/null 2>&1; then
+      verified+=("$p")
+    fi
+  done
+  if [ "${#verified[@]}" -gt 0 ]; then
+    printf "%s" "$(printf "%s," "${verified[@]}" | sed 's/,$//')"
+  fi
+}
+
+# Probe-mode: uses provided PORTS; prints only assignments on stdout
+if [ -n "$PORTS_ARG" ]; then
+  HTTP_VERIFIED="$(probe_ports "$IP" "$PORTS_ARG")"
+  printf "HTTP_CAND='%s'\nHTTP_VERIFIED='%s'\n" \
+    "${HTTP_CAND//\'/\'\"\'\"\'}" "${HTTP_VERIFIED//\'/\'\"\'\"\'}"
+  exit 0
+fi
+
+# XML/text mode
+if [ -s "$xml_file" ]; then
+  if ! grep -q "<host" "$xml_file" 2>/dev/null && ! grep -q 'hosts up="[^0]' "$xml_file" 2>/dev/null; then
+    [ $VERBOSE -eq 1 ] && echo "[warn] $xml_file has no hosts; consider -Pn or probe-mode." >&2
+  fi
+fi
+
+if command -v xmlstarlet >/dev/null 2>&1 && [ -s "$xml_file" ]; then
+  HTTP_CAND=$(
+    xmlstarlet sel -t -m "//port[state/@state='open' and service]" \
+      -v "concat(@portid,':',service/@name)" -n "$xml_file" 2>/dev/null \
+    | tr '[:upper:]' '[:lower:]' \
+    | egrep -i 'http|ssl/http|https' 2>/dev/null \
+    | cut -d: -f1 \
+    | paste -s -d, - 2>/dev/null || true
+  )
+elif [ -s "$txt_file" ]; then
+  HTTP_CAND=$(
+    grep -iP '^\d{1,5}/tcp\s+open\s+\S+' "$txt_file" 2>/dev/null \
+    | awk '{ for(i=1;i<=NF;i++) if(tolower($i) ~ /http|https|ssl\/http/) { split($1,p,"/"); printf p[1]","; break } }' \
+    | sed 's/,$//'
+  )
+fi
+
+if [ $VERBOSE -eq 1 ] && [ -n "$HTTP_CAND" ]; then
+  echo "[*] detect-http candidates: $HTTP_CAND" >&2
+fi
+
+HTTP_VERIFIED="$(probe_ports "$IP" "$HTTP_CAND")"
+
+if [ $VERBOSE -eq 1 ]; then
+  echo "[*] detect-http verified: ${HTTP_VERIFIED:-<none>}" >&2
+fi
+
+# stdout: ONLY assignments (safe for eval)
+printf "HTTP_CAND='%s'\nHTTP_VERIFIED='%s'\n" \
+  "${HTTP_CAND//\'/\'\"\'\"\'}" "${HTTP_VERIFIED//\'/\'\"\'\"\'}"

@@ -1,0 +1,17 @@
+# Common CDNs/analytics/vendors to ignore when harvesting hostnames
+fonts\.googleapis\.com
+gstatic\.com
+google-analytics\.com
+googlesyndication\.com
+googleadservices\.com
+googletagmanager\.com
+cdnjs\.cloudflare\.com
+cdnjs\.com
+cloudflare\.com
+cloudfront\.net
+akamaihd\.net
+amazonaws\.com
+bootstrapcdn\.com
+jsdelivr\.net
+doubleclick\.net
+w3schools\.com

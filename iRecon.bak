@@ -16,9 +16,9 @@ fi
 target="$1"
 
 # Ensure we always use absolute paths (based on the current working directory)
-BASEDIR="$(pwd)"			# the directory you ran the script from
-OUTDIR="${BASEDIR}/$target"		# absolute path to recon folder
-mkdir -p "$OUTDIR"			# create if missing
+BASE_PWD="$(pwd)"                     # the directory you ran the script from
+OUTDIR="${BASE_PWD}/recon"            # absolute path to recon folder
+mkdir -p "$OUTDIR"                    # create if missing
 echo -e "${yellow}[*]${end} ${purple}Using output directory:${end} ${blue}$OUTDIR${end}"
 
 figlet -f slant "iRecon" | lolcat
@@ -28,11 +28,11 @@ echo -e "\n${yellow}[*]${end} ${purple}Scanning ports on${end} ${blue}$target${e
 sudo /usr/bin/nmap -p- --open -sS --min-rate 1000 -n -Pn -vvv "$target" -oG $OUTDIR/allPorts 2>/dev/null | grep "Discovered open port"
 
 ### grab all those ports from the nmap scan and put them in a list
-IP="$target"
+ip_address="$target"
 ports=$(grep -oP '\d{1,5}/open' $OUTDIR/allPorts | cut -d '/' -f1 | xargs | tr ' ' ',')
 
 echo -e "\n${yellow}[*]${end} ${purple}Extracting information...${end}\n" > extractPorts.tmp
-echo -e "\t${yellow}[*]${end} ${purple}IP Address:${end} ${blue}$IP${end}" >> extractPorts.tmp
+echo -e "\t${yellow}[*]${end} ${purple}IP Address:${end} ${blue}$ip_address${end}" >> extractPorts.tmp
 echo -e "\t${yellow}[*]${end} ${purple}Open ports:${end} ${blue}$ports${end}\n" >> extractPorts.tmp
 echo "$ports" | tr -d '\n' | xclip -sel clip
 echo -e "${yellow}[*]${end} ${purple}Ports copied to clipboard${end}" >> extractPorts.tmp
@@ -41,10 +41,10 @@ rm extractPorts.tmp
 
 ### run scan on detected ports
 echo -e "\n${yellow}[*]${end} ${purple}Version and Service Scanning...${end}"
-nmap -sCV -p"$ports" -n -Pn --max-retries 2 --host-timeout 30s "$IP" -A -oN "$OUTDIR/targeted" -oX "$OUTDIR/targetedXML" >/dev/null 2>&1
+nmap -sCV -p"$ports" -n -Pn --max-retries 2 --host-timeout 30s "$ip_address" -A -oN "$OUTDIR/targeted" -oX "$OUTDIR/targetedXML" >/dev/null 2>&1
 
 ### http-detect
-eval "$(./http-detect "$OUTDIR" "$IP")"
+eval "$(./http-detect "$OUTDIR" "$ip_address")"
 echo -e "${yellow}[*]${end} ${purple}HTTP candidates:${end} ${blue}${HTTP_CAND:-<none>}${end}"
 echo -e "${yellow}[*]${end} ${purple}Verified HTTP ports:${end} ${blue}${HTTP_VERIFIED:-<none>}${end}"
 
@@ -57,7 +57,7 @@ if [ -n "${HTTP_VERIFIED:-}" ]; then
     [ -z "$p" ] && continue
     # call http-collect (no sudo); it expects OUTDIR IP PORT
     # ignore failures so iRecon continues
-    ./http-collect "$OUTDIR" "$IP" "$p" >/dev/null 2>&1 || true
+    ./http-collect "$OUTDIR" "$ip_address" "$p" >/dev/null 2>&1 || true
   done
 fi
 # --- end collection ---
@@ -83,7 +83,7 @@ rm -f "$emails_tmp"
 
 # assume HTTP_CAND contains e.g. s3.thetoppers.htb and HTTP_VERIFIED contains ports
 # prefer the hostname if present; else pass the IP
-target_hint="${HTTP_CAND:-$IP}"
+target_hint="${HTTP_CAND:-$ip_address}"
 # produce candidate hosts silently (no heavy OSINT)
 found_hosts="$(./passive-enrich "$OUTDIR" "$target_hint" --max 200)"
 echo -e "${yellow}[*]${end} ${purple}Passive hosts found:${end}"
@@ -91,11 +91,11 @@ echo "$found_hosts" | sed '/^$/d' | while IFS= read -r h; do
   echo -e "   ${blue}$h${end}"
 done
 # optionally feed found_hosts into add-hosts (dry-run first)
-./add-hosts "$OUTDIR" "$IP" "$(echo "$found_hosts" | paste -s -d, -)" --dry-run
+./add-hosts "$OUTDIR" "$ip_address" "$(echo "$found_hosts" | paste -s -d, -)" --dry-run
 
 
 # Preview what would be added (dry-run)
-preview="$(./add-hosts "$OUTDIR" "$IP" "${HTTP_VERIFIED:-}" --dry-run 2>/dev/null || true)"
+preview="$(./add-hosts "$OUTDIR" "$ip_address" "${HTTP_VERIFIED:-}" --dry-run 2>/dev/null || true)"
 if [ -n "$preview" ]; then
   echo -e "${yellow}[*]${end} ${purple}Hosts that would be added to /etc/hosts:${end}"
   echo "$preview" | while IFS= read -r ln; do
@@ -104,7 +104,7 @@ if [ -n "$preview" ]; then
     echo -e "   ${blue}${ip}${end}  ${purple}${host}${end}"
   done
   # apply for real (single sudo prompt) — uncomment if you want automatic apply:
-  # added="$(sudo bash ./add-hosts "$OUTDIR" "$IP" "${HTTP_VERIFIED:-}")"
+  # added="$(sudo bash ./add-hosts "$OUTDIR" "$ip_address" "${HTTP_VERIFIED:-}")"
   # echo "$added"
 else
   echo -e "${yellow}[*]${end} ${purple}No new /etc/hosts entries needed.${end}"
