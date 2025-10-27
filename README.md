@@ -1,5 +1,5 @@
 
-<img width="685" height="159" alt="lantern-logo-color" src="https://github.com/user-attachments/assets/3029cdaa-9d03-4f80-a541-a0030739b2b2" />
+<img width="694" height="177" alt="lantern-logo-color" src="https://github.com/user-attachments/assets/07545af7-b7ba-4d63-96a5-246de0a4e67b" />
 
 
 MOST DETAILS TBD
