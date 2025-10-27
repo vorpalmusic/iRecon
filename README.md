@@ -2,15 +2,11 @@
 <img width="694" height="177" alt="lantern-logo-color" src="https://github.com/user-attachments/assets/07545af7-b7ba-4d63-96a5-246de0a4e67b" />
 
 
-MOST DETAILS TBD
+Lantern began as a fork of a small nmap wrapper called iRecon ("an automated Nmap-based reconnaissance script designed to speed up the initial enumeration phase during CTFs or real-world pentests"). That script is small but was apparently the inspiration I needed. I envison 'lantern' now as a kind of external "linpeas"--for intitial information gathering in a pentest.
 
-This began as a fork of iRecon but only in a few days has far outgrown the original project, which may not even be actively maintained any more, so I removed the connection. Find the original repo here--this little script inspired the current work: https://github.com/gzzcoo/iRecon
+Find the original iRecon repo here--this little script inspired the current work: https://github.com/gzzcoo/iRecon
 
 the README will be totally reworked to reflect the current project soon.
-
-# iRecon 🧠⚡
-
-iRecon is an automated Nmap-based reconnaissance script designed to speed up the initial enumeration phase during CTFs or real-world pentests. It's especially useful for platforms like Hack The Box, where time and efficiency are key.
 
 ## Installation
 Prerequisites
