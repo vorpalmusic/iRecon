@@ -37,7 +37,6 @@ echo -e "${yellow}[*]${end} ${purple}Using output directory:${end} ${blue}$OUTDI
 ### run fast discovery scan just to find open ports (no live verbose spam)
 echo -e "\n${yellow}[*]${end} ${purple}Scanning ports on${end} ${blue}$target${end}${purple}...${end}\n"
 
-# Faster, cleaner discovery: no -vvv; constrained retries; high min-rate; greppable to file
 sudo /usr/bin/nmap \
   -p- --open -sS -n -Pn \
   --min-rate 2500 \
@@ -46,13 +45,24 @@ sudo /usr/bin/nmap \
   -oG "$OUTDIR/allPorts" \
   "$target" >/dev/null 2>&1
 
-# Show unique discovered ports based on the greppable output (no duplicates)
-awk '/\/open\//{print $2}' "$OUTDIR/allPorts" \
-  | sed 's/\/tcp//' \
-  | sort -n | uniq \
-  | while read -r p; do
-      echo "Discovered open port ${p}/tcp on $target"
-    done
+# If greppable file exists, extract ports reliably and print them once
+if [ -f "$OUTDIR/allPorts" ]; then
+  # extract unique port numbers (e.g. 22, 80)
+  discovered_ports=$(grep -oP '\d{1,5}/open' "$OUTDIR/allPorts" | cut -d'/' -f1 | sort -n -u)
+
+  if [ -n "$discovered_ports" ]; then
+    echo -e "${yellow}[*]${end} ${purple}Discovered open ports:${end}"
+    while IFS= read -r p; do
+      # sanity: ensure p is numeric
+      p="${p//[^0-9]/}"
+      [ -n "$p" ] && echo "  Discovered open port ${p}/tcp on $target"
+    done <<< "$discovered_ports"
+  else
+    echo -e "${yellow}[!]${end} ${purple}No open ports discovered in greppable output.${end}"
+  fi
+else
+  echo -e "${yellow}[!]${end} ${purple}Nmap greppable output missing: $OUTDIR/allPorts${end}"
+fi
 
 ### grab all those ports from the nmap scan and put them in a list
 IP="$target"
