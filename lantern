@@ -1,7 +1,7 @@
 #!/bin/bash
+# author: JackDaw
 
-# Author: Gzzcoo - expanded by JackDaw
-
+## VARIABLE BLOCK
 yellow="\e[33m"
 blue="\e[34m"
 gray="\e[90m"
@@ -26,14 +26,33 @@ OUTDIR="${BASEDIR}/$target"
 ROOTDIR="$(cd -- "$MODDIR/.." && pwd -P)"
 LISTDIR="${ROOTDIR}/lists"
 
+### END VARAIBLE DECLARATION
+### SCRIPT BEGINS THE WORK
+
 mkdir -p "$OUTDIR"
 echo -e "${yellow}[*]${end} ${purple}Using output directory:${end} ${blue}$OUTDIR${end}"
 
-"$MODDIR/banner"
+"$MODDIR/banner"        ## cue banner
 
-### run very fast nmap scan just to find open ports
+### run fast discovery scan just to find open ports (no live verbose spam)
 echo -e "\n${yellow}[*]${end} ${purple}Scanning ports on${end} ${blue}$target${end}${purple}...${end}\n"
-sudo /usr/bin/nmap -p- --open -sS --min-rate 1000 -n -Pn -vvv "$target" -oG "$OUTDIR/allPorts" 2>/dev/null | grep "Discovered open port"
+
+# Faster, cleaner discovery: no -vvv; constrained retries; high min-rate; greppable to file
+sudo /usr/bin/nmap \
+  -p- --open -sS -n -Pn \
+  --min-rate 2500 \
+  --max-retries 0 \
+  -T4 \
+  -oG "$OUTDIR/allPorts" \
+  "$target" >/dev/null 2>&1
+
+# Show unique discovered ports based on the greppable output (no duplicates)
+awk '/\/open\//{print $2}' "$OUTDIR/allPorts" \
+  | sed 's/\/tcp//' \
+  | sort -n | uniq \
+  | while read -r p; do
+      echo "Discovered open port ${p}/tcp on $target"
+    done
 
 ### grab all those ports from the nmap scan and put them in a list
 IP="$target"
@@ -57,7 +76,7 @@ else
 fi
 
 ### http-detect
-eval "$("$MODDIR/http-detect" "$OUTDIR" "$IP")"
+eval "$("$MODDIR/http/http-detect" "$OUTDIR" "$IP")"
 echo -e "${yellow}[*]${end} ${purple}HTTP candidates:${end} ${blue}${HTTP_CAND:-<none>}${end}"
 echo -e "${yellow}[*]${end} ${purple}Verified HTTP ports:${end} ${blue}${HTTP_VERIFIED:-<none>}${end}"
 
@@ -66,7 +85,7 @@ if [ -n "${HTTP_VERIFIED:-}" ]; then
   for p in $(echo "${HTTP_VERIFIED}" | tr ',' ' '); do
     p="${p//[^0-9]/}"
     [ -z "$p" ] && continue
-    "$MODDIR/http-collect" "$OUTDIR" "$IP" "$p" >/dev/null 2>&1 || true
+    "$MODDIR/http/http-collect" "$OUTDIR" "$IP" "$p" >/dev/null 2>&1 || true
   done
 fi
 # --- end collection ---
@@ -92,14 +111,14 @@ rm -f "$emails_tmp"
 
 # assume HTTP_CAND contains e.g. s3.thetoppers.htb and HTTP_VERIFIED contains ports
 target_hint="${HTTP_CAND:-$IP}"
-found_hosts="$("$MODDIR/passive-enrich" "$OUTDIR" "$target_hint" --max 200)"
+found_hosts="$("$MODDIR/http/enrich" "$OUTDIR" "$target_hint" --max 200)"
 echo -e "${yellow}[*]${end} ${purple}Passive hosts found:${end}"
 echo "$found_hosts" | sed '/^$/d' | while IFS= read -r h; do
   echo -e "   ${blue}$h${end}"
 done
 
 # --- Add /etc/hosts entries ONCE (denylist-aware) ---
-added="$(sudo bash "$MODDIR/add-hosts" "$OUTDIR" "$IP" "${HTTP_VERIFIED:-}" --deny-file "$LISTDIR/deny-domains")"
+added="$(sudo bash "$MODDIR/http/add-hosts" "$OUTDIR" "$IP" "${HTTP_VERIFIED:-}" --deny-file "$LISTDIR/deny-domains")"
 if [ -n "$added" ]; then
   echo -e "${yellow}[*]${end} ${purple}Hosts added to /etc/hosts:${end}"
   echo "$added"
@@ -107,16 +126,23 @@ else
   echo -e "${yellow}[*]${end} ${purple}No new /etc/hosts entries needed.${end}"
 fi
 
-### generate HTML report
-echo -e "\n${yellow}[*]${end} ${purple}Generating HTML Report and opening with the browser...${end}"
-NMAP_XSL="/usr/share/nmap/nmap.xsl"
+# ... generate HTML deep dive
+# Robust stylesheet resolution: honor env if provided, else use common paths
+: "${NMAP_XSL:=/usr/share/nmap/nmap.xsl}"
 if [ ! -f "$NMAP_XSL" ]; then
-  NMAP_XSL="$(find /usr -name nmap.xsl 2>/dev/null | head -n1 || true)"
+  NMAP_XSL="$(find /usr/local/share /usr/share /opt -type f -name nmap.xsl 2>/dev/null | head -n1 || true)"
 fi
 
 if [ -s "$OUTDIR/targetedXML" ]; then
   if [ -n "$NMAP_XSL" ] && [ -f "$NMAP_XSL" ]; then
     xsltproc -o "$OUTDIR/index.html" "$NMAP_XSL" "$OUTDIR/targetedXML" || echo "[!] xsltproc failed"
+    # >>> Append Lantern module summary via reporter <<<
+    rep="$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")"/scripts >/dev/null 2>&1 && pwd)/reporter"
+    if [ -x "$rep" ]; then
+      "$rep" "$OUTDIR" || echo "[!] reporter failed"
+    else
+      echo "[!] reporter not found or not executable; skipping module summary"
+    fi
   else
     echo "[!] nmap.xsl stylesheet not found; cannot generate HTML"
   fi
@@ -124,12 +150,27 @@ else
   echo "[!] targetedXML missing or empty; skipping HTML generation"
 fi
 
-# Launch a tiny HTTP server to view the report, then close
-(
-  python3 -m http.server 6969 -d "$OUTDIR" &
+# Launch a tiny HTTP server to view the report, then exit (server left running in background)
+# serve localhost only on port 9999
+# wait briefly for index.html to appear (fast loop)
+for i in $(seq 1 50); do
+  [ -s "$OUTDIR/index.html" ] && break
+  sleep 0.1
+done
+
+if [ -s "$OUTDIR/index.html" ]; then
+  # start server in background, bind to localhost only, disown so lantern exits
+  python3 -m http.server 9999 --bind 127.0.0.1 -d "$OUTDIR" >/dev/null 2>&1 &
   server_pid=$!
-  sleep 1
-  /usr/bin/firefox "http://127.0.0.1:6969/index.html" &
-  sleep 6
-  kill "$server_pid" &>/dev/null
-) &>/dev/null
+  disown "$server_pid" 2>/dev/null || true
+
+  url="http://127.0.0.1:9999/index.html"
+  echo -e "${yellow}[*]${end} ${purple}Report:${end} ${blue}$url${end}"
+
+  # open without blocking; script will end normally while server continues
+  ( xdg-open "$url" >/dev/null 2>&1 || /usr/bin/firefox "$url" >/dev/null 2>&1 ) &
+else
+  echo "[!] index.html not found; not starting web server"
+fi
+
+exit 0

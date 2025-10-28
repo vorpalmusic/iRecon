@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+OUTDIR="${1:-}"
+if [ -z "$OUTDIR" ] || [ ! -d "$OUTDIR" ]; then
+  echo "[!] Usage: scripts/reporter <OUTDIR>" >&2
+  exit 2
+fi
+
+IDX="$OUTDIR/index.html"
+if [ ! -f "$IDX" ]; then
+  echo "[!] index.html not found in $OUTDIR; skipping reporter"
+  exit 0
+fi
+
+FRAGDIR="$OUTDIR/report/fragments"
+mkdir -p "$FRAGDIR"
+
+# ---------------- helpers ----------------
+insert_before_body_close() {
+  local src_html="$1"
+  local insert_file="$2"
+  local tmp="${src_html}.tmp$$"
+  awk -v frag="$(cat "$insert_file")" '
+    BEGIN{done=0}
+    {
+      print $0
+      if(!done && $0 ~ /<\/[Bb][Oo][Dd][Yy]>/) { print frag; done=1 }
+    }
+    END{ if(!done) print frag }
+  ' "$src_html" > "$tmp" && mv "$tmp" "$src_html"
+}
+
+html_escape() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
+
+# ---------------- HTTP summary fragment (10-http.html) ----------------
+build_http_fragment() {
+  local frag="$FRAGDIR/10-http.html"
+  : > "$frag"
+
+  echo '<h3>HTTP Summary</h3>' >> "$frag"
+
+  if [ ! -d "$OUTDIR/http" ]; then
+    echo '<p><em>No HTTP artifacts found.</em></p>' >> "$frag"
+    return
+  fi
+
+  shopt -u nullglob
+  set +e
+  ports=( "$OUTDIR"/http/* )
+  set -e
+  shopt -s nullglob
+
+  if [ ${#ports[@]} -eq 0 ]; then
+    echo '<p><em>No HTTP artifacts found.</em></p>' >> "$frag"
+    return
+  fi
+
+  for portdir in "${ports[@]}"; do
+    [ -d "$portdir" ] || continue
+    port="$(basename "$portdir")"
+    title="$(tr -d '\r\n' < "$portdir/title.txt" 2>/dev/null || true)"
+    [ -n "$title" ] || title="(no title)"
+    esc_title="$(printf '%s' "$title" | html_escape)"
+
+    hosts_count="$(wc -l < "$portdir/hosts_from_body.txt" 2>/dev/null || echo 0)"
+    emails_count="$(wc -l < "$portdir/emails.txt" 2>/dev/null || echo 0)"
+    body_sz="$(stat -c%s "$portdir/body.html" 2>/dev/null || echo 0)"
+
+    cat >> "$frag" <<PORT
+<div class="lantern-port">
+  <h4>Port <code>$port</code> — $esc_title</h4>
+  <div class="lantern-meta">
+    hosts_from_body: $hosts_count &nbsp;•&nbsp; emails: $emails_count &nbsp;•&nbsp; body bytes: $body_sz
+  </div>
+  <div class="lantern-files">
+    <a href="http/$port/body.html">body</a> &nbsp;|&nbsp;
+    <a href="http/$port/headers.txt">headers</a> &nbsp;|&nbsp;
+    <a href="http/$port/robots.txt">robots</a> &nbsp;|&nbsp;
+    <a href="http/$port/sitemap.xml">sitemap</a> &nbsp;|&nbsp;
+    <a href="http/$port/whatweb.txt">whatweb</a> &nbsp;|&nbsp;
+    <a href="http/$port/emails.txt">emails</a> &nbsp;|&nbsp;
+    <a href="http/$port/hosts_from_body.txt">hosts</a> &nbsp;|&nbsp;
+    <a href="http/$port/cert.txt">cert</a>
+  </div>
+</div>
+PORT
+  done
+}
+
+# ---------------- assemble & inject ----------------
+TMP="$(mktemp)"
+cat > "$TMP" <<'HEAD'
+<style>
+#lantern-report{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,"Noto Sans","Liberation Sans",sans-serif;margin:2rem 0;border-top:2px solid #e5e7eb;padding-top:1rem}
+#lantern-report h2{margin:0 0 .75rem;font-size:1.35rem}
+#lantern-report h3{margin:1rem 0 .5rem;font-size:1.1rem}
+#lantern-report h4{margin:.6rem 0 .3rem;font-size:1.02rem}
+#lantern-report .lantern-port{border:1px solid #e5e7eb;border-radius:10px;padding:12px;margin:10px 0}
+#lantern-report .lantern-meta{color:#555;font-size:.9rem;margin-bottom:.4rem}
+#lantern-report code{background:#f6f8fa;padding:0 .3rem;border-radius:6px}
+#lantern-report .lantern-files a{text-decoration:none}
+</style>
+<section id="lantern-report">
+  <h2>Lantern Modules</h2>
+HEAD
+
+# Build current fragments (HTTP for now)
+build_http_fragment
+
+# Concat fragments in order
+if compgen -G "$FRAGDIR"/* >/dev/null; then
+  for f in $(ls -1v "$FRAGDIR"/*); do
+    echo "<section class=\"lantern-fragment\" id=\"$(basename "$f" | sed 's/[^a-zA-Z0-9_-]/_/g')\">" >> "$TMP"
+    cat "$f" >> "$TMP"
+    echo "</section>" >> "$TMP"
+  done
+else
+  echo "<p><em>No module fragments produced output.</em></p>" >> "$TMP"
+fi
+
+echo "</section>" >> "$TMP"
+
+# Inject
+insert_before_body_close "$IDX" "$TMP"
+rm -f "$TMP"
+
+echo "[*] Reporter appended module summary to $IDX"
