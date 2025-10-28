@@ -14,9 +14,7 @@ sudo apt install nmap xsltproc python3 wget bat firefox-esr lolcat xclip -y
 Installing the tool
 ```bash
 git clone https://github.com/vorpalmusic/lantern.git
-cd lantern
-chmod +x lantern
-sudo mv lantern /usr/local/bin/lantern
+sudo ln -sf ~/lantern/lantern /usr/local/bin/lantern
 ```
 
 ## Usage
