@@ -1,5 +1,4 @@
-
-<img width="694" height="177" alt="lantern-logo-color" src="https://github.com/user-attachments/assets/07545af7-b7ba-4d63-96a5-246de0a4e67b" />
+<img width="687" height="207" alt="lantern-logo-color" src="https://github.com/user-attachments/assets/c7d56e1d-e62a-490a-b19b-6cc3e1e87ecb" />
 
 
 Lantern began as a fork of a small nmap wrapper called iRecon ("an automated Nmap-based reconnaissance script designed to speed up the initial enumeration phase during CTFs or real-world pentests"). That script is small but was apparently the inspiration I needed. I envison 'lantern' now as a kind of external "linpeas"--for intitial information gathering in a pentest.
