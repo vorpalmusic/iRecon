@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ELLIPSIS="…"
+
+# --- Locate taglines file (override with LANTERN_TAGLINES_FILE) ---
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-${0}}")" && pwd -P)"
+tagfile="${LANTERN_TAGLINES_FILE:-$script_dir/lists/taglines}"
+
+# Load taglines (ignore blank lines and lines starting with #)
+if [[ -r "$tagfile" ]]; then
+  mapfile -t TAGLINES < <(grep -v '^\s*#' "$tagfile" | sed '/^\s*$/d')
+else
+  TAGLINES=()
+fi
+
+# Fallback if file missing/empty
+if (( ${#TAGLINES[@]} == 0 )); then
+  TAGLINES=(
+    "The trusty lantern gutters; deeper shadows stir."
+    "Oil runs thin; silhouettes grow teeth."
+    "Warm light recedes; cold corners multiply."
+  )
+fi
+
+pick_tagline() {
+  if command -v shuf >/dev/null 2>&1; then
+    printf '%s\n' "${TAGLINES[@]}" | shuf -n1
+  else
+    local n=${#TAGLINES[@]}
+    local idx=$(( RANDOM % n ))
+    printf '%s' "${TAGLINES[$idx]}"
+  fi
+}
+
+# --- Banner gradient (bottom red → top green) ---
+palette=(196 202 208 214 220 190 154 118 82 46)
+
+mapfile -t BANNER <<'ASCII'
+
+               ▀                                                                   
+                 █    ▀                                                            
+███           ■     █   ████      ██ ███████████ ██████████  ███████  ████      ██ 
+ ██             █ █      █████    ██ █   ███     ███        ███   ███  █████    ██ 
+ ██           ██   ██    ██ ███   ██     ███     ███        ███   ████ ██ ███   ██ 
+ ██         ██    ■  ██  ██   ██  ██     ███     ███████    ████████   ██   ██  ██ 
+ ██          █  ██   █   ██   ███ ██     ███     ██         ██     ██  ██   ███ ██ 
+ ██       █   █  ██ █    ██    █████     ███     ██       █ ██     ██  ██     ████ 
+ ██████████   ███████   ███     █████    █████   ██████████ ██     ██ ███      ████
+ASCII
+
+cols=$(tput cols 2>/dev/null || echo 80)
+n=${#BANNER[@]}
+L=${#palette[@]}
+pad=2
+default_color=15
+
+# Print ASCII banner (left-aligned, clip as needed)
+for i in "${!BANNER[@]}"; do
+  line="${BANNER[$i]}"
+  if (( n > 1 && L > 0 )); then
+    idx=$(( ((L-1) * (n-1 - i)) / (n-1) ))
+  else
+    idx=0
+  fi
+  color="${palette[$idx]:-$default_color}"
+
+  raw_len=$(printf '%s' "$line" | wc -m)
+  effective=$(( cols - pad ))
+  (( effective < 1 )) && effective=1
+
+  if (( raw_len > effective )); then
+    clip=$(printf '%s' "$line" | awk -v w="$effective" '{ print (length($0) <= w) ? $0 : substr($0, 1, w-1) }')
+    printf "\033[38;5;%sm%*s%s%s\033[0m\n" "$color" "$pad" "" "$clip" "$ELLIPSIS"
+  else
+    printf "\033[38;5;%sm%*s%s\033[0m\n" "$color" "$pad" "" "$line"
+  fi
+done
+
+# --- Left-aligned tagline box (dark blue→purple frame; text waves dark→light→purple) ---
+tag_palette=(17 18 19 54 55 90 91)  # frame colors
+# Light ramp (we mirror this across the line so it brightens to the middle then returns)
+# text_ramp=(55 60 63 66 99 123 147 153 159 189 195 201 207 213)
+text_ramp=(99 105 111 135 141 147 153 159 165 171 177 183 189 195)
+
+
+reset="\033[0m"
+
+frame_color_at() {
+  local pos="$1" width="$2" plen=${#tag_palette[@]}
+  (( width <= 1 )) && { echo "${tag_palette[0]}"; return; }
+  local idx=$(( (pos * (plen-1)) / (width-1) ))
+  echo "${tag_palette[$idx]}"
+}
+
+# Single-pass "triangular" text gradient: dark → light → back toward purple
+wave_text_color_at() {
+  local ci="$1" total="$2" rlen=${#text_ramp[@]}
+  if (( total <= 1 )); then
+    echo "${text_ramp[0]}"; return
+  fi
+  # integer math: m ∈ [0..2000]
+  local m=$(( (ci * 2000) / (total - 1) ))
+  local idx
+  if (( m <= 1000 )); then
+    idx=$(( (m * (rlen-1)) / 1000 ))
+  else
+    local back=$(( 2000 - m ))  # 1000..0
+    idx=$(( (back * (rlen-1)) / 1000 ))
+  fi
+  echo "${text_ramp[$idx]}"
+}
+
+render_tagline_box() {
+  local text="$1"
+  local pad_lr=4
+  local left_pad="$pad"
+
+  local max_inner=$(( cols - left_pad - 2 - pad_lr*2 ))
+  (( max_inner < 1 )) && max_inner=1
+
+  local tlen
+  tlen=$(printf '%s' "$text" | wc -m)
+  if (( tlen > max_inner )); then
+    text="$(printf '%s' "$text" | awk -v w="$max_inner" '{print substr($0,1,w-1)}')…"
+    tlen=$(printf '%s' "$text" | wc -m)
+  fi
+
+  local inner_len=$tlen
+  local inner_width=$(( inner_len + pad_lr*2 ))
+  local frame_width=$(( inner_width + 2 ))
+
+  # top
+  printf "%*s" "$left_pad" ""
+  for ((i=0;i<frame_width;i++)); do
+    c='═'; (( i==0 )) && c='╔'; (( i==frame_width-1 )) && c='╗'
+    col=$(frame_color_at "$i" "$frame_width")
+    printf "\033[38;5;%sm%s" "$col" "$c"
+  done
+  printf "%b\n" "$reset"
+
+  # middle (wave-colored text)
+  printf "%*s" "$left_pad" ""
+  for ((i=0;i<frame_width;i++)); do
+    col=$(frame_color_at "$i" "$frame_width")
+    if (( i==0 || i==frame_width-1 )); then
+      printf "\033[38;5;%sm║" "$col"
+    else
+      pos=$(( i - 1 ))  # inner area
+      if (( pos < pad_lr || pos >= pad_lr + inner_len )); then
+        printf " "
+      else
+        ci=$(( pos - pad_lr ))
+        ch="${text:ci:1}"
+        tcol=$(wave_text_color_at "$ci" "$inner_len")
+        printf "\033[38;5;%sm%s" "$tcol" "$ch"
+      fi
+    fi
+  done
+  printf "%b\n" "$reset"
+
+  # bottom
+  printf "%*s" "$left_pad" ""
+  for ((i=0;i<frame_width;i++)); do
+    c='═'; (( i==0 )) && c='╚'; (( i==frame_width-1 )) && c='╝'
+    col=$(frame_color_at "$i" "$frame_width")
+    printf "\033[38;5;%sm%s" "$col" "$c"
+  done
+  printf "%b\n" "$reset"
+}
+
+trap 'printf "%b" "\033[0m"' EXIT
+render_tagline_box "$(pick_tagline)"

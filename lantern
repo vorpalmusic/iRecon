@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Author: Gzzcoo - epxanded by JackDaw
+# Author: Gzzcoo - expanded by JackDaw
 
 yellow="\e[33m"
 blue="\e[34m"
@@ -15,22 +15,29 @@ fi
 
 target="$1"
 
-# Ensure we always use absolute paths (based on the current working directory)
-SCRIPTDIR="$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")" >/dev/null 2>&1 && pwd)" # to generate path to helpers
-BASEDIR="$(pwd)"			# the directory you ran the script from
-OUTDIR="${BASEDIR}/$target"		# absolute path to recon folder
-mkdir -p "$OUTDIR"			# create if missing
+# Resolve helper dir (modules) relative to this script, works via symlink
+MODDIR="$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")"/modules >/dev/null 2>&1 && pwd)"
+
+# Keep OUTDIR under the caller's current dir (your original behavior)
+BASEDIR="$(pwd)"
+OUTDIR="${BASEDIR}/$target"
+
+# Project root = parent of modules; lists live there
+ROOTDIR="$(cd -- "$MODDIR/.." && pwd -P)"
+LISTDIR="${ROOTDIR}/lists"
+
+mkdir -p "$OUTDIR"
 echo -e "${yellow}[*]${end} ${purple}Using output directory:${end} ${blue}$OUTDIR${end}"
 
-figlet -f slant "iRecon" | lolcat
+"$MODDIR/banner"
 
 ### run very fast nmap scan just to find open ports
 echo -e "\n${yellow}[*]${end} ${purple}Scanning ports on${end} ${blue}$target${end}${purple}...${end}\n"
-sudo /usr/bin/nmap -p- --open -sS --min-rate 1000 -n -Pn -vvv "$target" -oG $OUTDIR/allPorts 2>/dev/null | grep "Discovered open port"
+sudo /usr/bin/nmap -p- --open -sS --min-rate 1000 -n -Pn -vvv "$target" -oG "$OUTDIR/allPorts" 2>/dev/null | grep "Discovered open port"
 
 ### grab all those ports from the nmap scan and put them in a list
 IP="$target"
-ports=$(grep -oP '\d{1,5}/open' $OUTDIR/allPorts | cut -d '/' -f1 | xargs | tr ' ' ',')
+ports=$(grep -oP '\d{1,5}/open' "$OUTDIR/allPorts" | cut -d '/' -f1 | xargs | tr ' ' ',')
 
 echo -e "\n${yellow}[*]${end} ${purple}Extracting information...${end}\n" > extractPorts.tmp
 echo -e "\t${yellow}[*]${end} ${purple}IP Address:${end} ${blue}$IP${end}" >> extractPorts.tmp
@@ -40,25 +47,26 @@ echo -e "${yellow}[*]${end} ${purple}Ports copied to clipboard${end}" >> extract
 /usr/bin/batcat --style=plain --paging=never extractPorts.tmp
 rm extractPorts.tmp
 
-### run scan on detected ports
-echo -e "\n${yellow}[*]${end} ${purple}Version and Service Scanning...${end}"
-nmap -sCV -p"$ports" -n -Pn --max-retries 2 --host-timeout 30s "$IP" -A -oN "$OUTDIR/targeted" -oX "$OUTDIR/targetedXML" >/dev/null 2>&1
+# --- targeted scan (only if we have ports) ---
+if [ -n "$ports" ]; then
+  echo -e "\n${yellow}[*]${end} ${purple}Version and Service Scanning...${end}"
+  sudo /usr/bin/nmap -sCV -p"$ports" -n -Pn --max-retries 2 --host-timeout 30s "$IP" -A \
+       -oN "$OUTDIR/targeted" -oX "$OUTDIR/targetedXML" >/dev/null 2>&1
+else
+  echo -e "${yellow}[!]${end} ${purple}No open ports detected; skipping targeted scan.${end}"
+fi
 
 ### http-detect
-eval "$("$SCRIPTDIR/http-detect" "$OUTDIR" "$IP")"
+eval "$("$MODDIR/http-detect" "$OUTDIR" "$IP")"
 echo -e "${yellow}[*]${end} ${purple}HTTP candidates:${end} ${blue}${HTTP_CAND:-<none>}${end}"
 echo -e "${yellow}[*]${end} ${purple}Verified HTTP ports:${end} ${blue}${HTTP_VERIFIED:-<none>}${end}"
 
 # --- http-collect for verified HTTP ports (minimal & robust) ---
 if [ -n "${HTTP_VERIFIED:-}" ]; then
-  # HTTP_VERIFIED is a comma list like "80,8080"
   for p in $(echo "${HTTP_VERIFIED}" | tr ',' ' '); do
-    # sanity: keep only digits
     p="${p//[^0-9]/}"
     [ -z "$p" ] && continue
-    # call http-collect (no sudo); it expects OUTDIR IP PORT
-    # ignore failures so iRecon continues
-    $SCRIPTDIR/http-collect "$OUTDIR" "$IP" "$p" >/dev/null 2>&1 || true
+    "$MODDIR/http-collect" "$OUTDIR" "$IP" "$p" >/dev/null 2>&1 || true
   done
 fi
 # --- end collection ---
@@ -83,28 +91,17 @@ rm -f "$emails_tmp"
 # --- end emails summary ---
 
 # assume HTTP_CAND contains e.g. s3.thetoppers.htb and HTTP_VERIFIED contains ports
-# prefer the hostname if present; else pass the IP
 target_hint="${HTTP_CAND:-$IP}"
-# produce candidate hosts silently (no heavy OSINT)
-found_hosts="$("$SCRIPTDIR/passive-enrich" "$OUTDIR" "$target_hint" --max 200)"
+found_hosts="$("$MODDIR/passive-enrich" "$OUTDIR" "$target_hint" --max 200)"
 echo -e "${yellow}[*]${end} ${purple}Passive hosts found:${end}"
 echo "$found_hosts" | sed '/^$/d' | while IFS= read -r h; do
   echo -e "   ${blue}$h${end}"
 done
-# optionally feed found_hosts into add-hosts (dry-run first)
-$SCRIPTDIR/add-hosts "$OUTDIR" "$IP" "$(echo "$found_hosts" | paste -s -d, -)"
 
-# Preview what would be added (dry-run)
-preview="$("$SCRIPTDIR/add-hosts" "$OUTDIR" "$IP" "${HTTP_VERIFIED:-}" --dry-run 2>/dev/null || true)"
-if [ -n "$preview" ]; then
+# --- Add /etc/hosts entries ONCE (denylist-aware) ---
+added="$(sudo bash "$MODDIR/add-hosts" "$OUTDIR" "$IP" "${HTTP_VERIFIED:-}" --deny-file "$LISTDIR/deny-domains")"
+if [ -n "$added" ]; then
   echo -e "${yellow}[*]${end} ${purple}Hosts added to /etc/hosts:${end}"
-  echo "$preview" | while IFS= read -r ln; do
-    [ -z "$ln" ] && continue
-    ip="${ln%% *}"; host="${ln#* }"
-    echo -e "   ${blue}${ip}${end}  ${purple}${host}${end}"
-  done
-  # apply
-  added="$(sudo bash "$SCRIPTDIR/add-hosts" "$OUTDIR" "$IP" "${HTTP_VERIFIED:-}")"
   echo "$added"
 else
   echo -e "${yellow}[*]${end} ${purple}No new /etc/hosts entries needed.${end}"
@@ -112,15 +109,14 @@ fi
 
 ### generate HTML report
 echo -e "\n${yellow}[*]${end} ${purple}Generating HTML Report and opening with the browser...${end}"
-# generate HTML report from Nmap XML using the nmap stylesheet (safe order & checks)
 NMAP_XSL="/usr/share/nmap/nmap.xsl"
 if [ ! -f "$NMAP_XSL" ]; then
   NMAP_XSL="$(find /usr -name nmap.xsl 2>/dev/null | head -n1 || true)"
 fi
 
-if [ -s $OUTDIR/targetedXML ]; then
+if [ -s "$OUTDIR/targetedXML" ]; then
   if [ -n "$NMAP_XSL" ] && [ -f "$NMAP_XSL" ]; then
-    xsltproc -o $OUTDIR/index.html "$NMAP_XSL" $OUTDIR/targetedXML || echo "[!] xsltproc failed"
+    xsltproc -o "$OUTDIR/index.html" "$NMAP_XSL" "$OUTDIR/targetedXML" || echo "[!] xsltproc failed"
   else
     echo "[!] nmap.xsl stylesheet not found; cannot generate HTML"
   fi
@@ -128,12 +124,12 @@ else
   echo "[!] targetedXML missing or empty; skipping HTML generation"
 fi
 
-
+# Launch a tiny HTTP server to view the report, then close
 (
-    python3 -m http.server 6969 -d $OUTDIR &
-    server_pid=$!
-    sleep 1
-    /usr/bin/firefox http://127.0.0.1:6969/index.html &
-    sleep 6
-    kill "$server_pid" &>/dev/null
+  python3 -m http.server 6969 -d "$OUTDIR" &
+  server_pid=$!
+  sleep 1
+  /usr/bin/firefox "http://127.0.0.1:6969/index.html" &
+  sleep 6
+  kill "$server_pid" &>/dev/null
 ) &>/dev/null

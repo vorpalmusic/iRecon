@@ -167,7 +167,7 @@ VERBOSE=0
 
 # default deny file: alongside this script, or env override
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
-DENY_FILE_DEFAULT="$SCRIPT_DIR/deny-domains.txt"
+DENY_FILE_DEFAULT="$SCRIPT_DIR/../lists/deny-domains"
 DENY_FILE="${ADD_HOSTS_DENY:-$DENY_FILE_DEFAULT}"
 
 # parse tail flags (leave PORTS_ARG as-is)
