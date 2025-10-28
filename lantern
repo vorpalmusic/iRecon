@@ -15,22 +15,24 @@ fi
 
 target="$1"
 
-# Resolve helper dir (modules) relative to this script, works via symlink
-MODDIR="$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")"/modules >/dev/null 2>&1 && pwd)"
-
-# Keep OUTDIR under the caller's current dir (your original behavior)
+# Generating folder structure
 BASEDIR="$(pwd)"
+MODDIR="$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")"/modules >/dev/null 2>&1 && pwd)"
 OUTDIR="${BASEDIR}/$target"
+mkdir -p "$OUTDIR"
+
+# All scanner/report artifacts go under report/
+REPORTDIR="${OUTDIR}/report"
+mkdir -p "$REPORTDIR"
+
+echo -e "${yellow}[*]${end} ${purple}Using output directory:${end} ${blue}$OUTDIR${end}"
 
 # Project root = parent of modules; lists live there
 ROOTDIR="$(cd -- "$MODDIR/.." && pwd -P)"
 LISTDIR="${ROOTDIR}/lists"
 
-### END VARAIBLE DECLARATION
+### END VARIABLE DECLARATION
 ### SCRIPT BEGINS THE WORK
-
-mkdir -p "$OUTDIR"
-echo -e "${yellow}[*]${end} ${purple}Using output directory:${end} ${blue}$OUTDIR${end}"
 
 "$MODDIR/banner"        ## cue banner
 
@@ -42,18 +44,16 @@ sudo /usr/bin/nmap \
   --min-rate 2500 \
   --max-retries 0 \
   -T4 \
-  -oG "$OUTDIR/allPorts" \
+  -oG "$REPORTDIR/allPorts" \
   "$target" >/dev/null 2>&1
 
 # If greppable file exists, extract ports reliably and print them once
-if [ -f "$OUTDIR/allPorts" ]; then
-  # extract unique port numbers (e.g. 22, 80)
-  discovered_ports=$(grep -oP '\d{1,5}/open' "$OUTDIR/allPorts" | cut -d'/' -f1 | sort -n -u)
+if [ -f "$REPORTDIR/allPorts" ]; then
+  discovered_ports=$(grep -oP '\d{1,5}/open' "$REPORTDIR/allPorts" | cut -d'/' -f1 | sort -n -u)
 
   if [ -n "$discovered_ports" ]; then
     echo -e "${yellow}[*]${end} ${purple}Discovered open ports:${end}"
     while IFS= read -r p; do
-      # sanity: ensure p is numeric
       p="${p//[^0-9]/}"
       [ -n "$p" ] && echo "  Discovered open port ${p}/tcp on $target"
     done <<< "$discovered_ports"
@@ -61,12 +61,12 @@ if [ -f "$OUTDIR/allPorts" ]; then
     echo -e "${yellow}[!]${end} ${purple}No open ports discovered in greppable output.${end}"
   fi
 else
-  echo -e "${yellow}[!]${end} ${purple}Nmap greppable output missing: $OUTDIR/allPorts${end}"
+  echo -e "${yellow}[!]${end} ${purple}Nmap greppable output missing: $REPORTDIR/allPorts${end}"
 fi
 
 ### grab all those ports from the nmap scan and put them in a list
 IP="$target"
-ports=$(grep -oP '\d{1,5}/open' "$OUTDIR/allPorts" | cut -d '/' -f1 | xargs | tr ' ' ',')
+ports=$(grep -oP '\d{1,5}/open' "$REPORTDIR/allPorts" | cut -d '/' -f1 | xargs | tr ' ' ',')
 
 echo -e "\n${yellow}[*]${end} ${purple}Extracting information...${end}\n" > extractPorts.tmp
 echo -e "\t${yellow}[*]${end} ${purple}IP Address:${end} ${blue}$IP${end}" >> extractPorts.tmp
@@ -80,7 +80,7 @@ rm extractPorts.tmp
 if [ -n "$ports" ]; then
   echo -e "\n${yellow}[*]${end} ${purple}Version and Service Scanning...${end}"
   sudo /usr/bin/nmap -sCV -p"$ports" -n -Pn --max-retries 2 --host-timeout 30s "$IP" -A \
-       -oN "$OUTDIR/targeted" -oX "$OUTDIR/targetedXML" >/dev/null 2>&1
+       -oN "$REPORTDIR/targeted" -oX "$REPORTDIR/targetedXML" >/dev/null 2>&1
 else
   echo -e "${yellow}[!]${end} ${purple}No open ports detected; skipping targeted scan.${end}"
 fi
@@ -101,7 +101,7 @@ fi
 # --- end collection ---
 
 # --- show emails we scraped from the HTTP bodies (if any) ---
-emails_tmp="$OUTDIR/.emails.tmp"
+emails_tmp="$REPORTDIR/.emails.tmp"
 : > "$emails_tmp"
 if [ -n "${HTTP_VERIFIED:-}" ]; then
   for p in $(echo "${HTTP_VERIFIED}" | tr ',' ' '); do
@@ -119,7 +119,7 @@ fi
 rm -f "$emails_tmp"
 # --- end emails summary ---
 
-# assume HTTP_CAND contains e.g. s3.thetoppers.htb and HTTP_VERIFIED contains ports
+# Passive enrichment
 target_hint="${HTTP_CAND:-$IP}"
 found_hosts="$("$MODDIR/http/enrich" "$OUTDIR" "$target_hint" --max 200)"
 echo -e "${yellow}[*]${end} ${purple}Passive hosts found:${end}"
@@ -136,51 +136,88 @@ else
   echo -e "${yellow}[*]${end} ${purple}No new /etc/hosts entries needed.${end}"
 fi
 
-# ... generate HTML deep dive
-# Robust stylesheet resolution: honor env if provided, else use common paths
+# --- Generate HTML report (with safe fallback) ---
+# Try Nmap XSLT → if it fails or stylesheet missing, create a minimal stub.
 : "${NMAP_XSL:=/usr/share/nmap/nmap.xsl}"
 if [ ! -f "$NMAP_XSL" ]; then
   NMAP_XSL="$(find /usr/local/share /usr/share /opt -type f -name nmap.xsl 2>/dev/null | head -n1 || true)"
 fi
 
-if [ -s "$OUTDIR/targetedXML" ]; then
-  if [ -n "$NMAP_XSL" ] && [ -f "$NMAP_XSL" ]; then
-    xsltproc -o "$OUTDIR/index.html" "$NMAP_XSL" "$OUTDIR/targetedXML" || echo "[!] xsltproc failed"
-    # >>> Append Lantern module summary via reporter <<<
-    rep="$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")"/scripts >/dev/null 2>&1 && pwd)/reporter"
-    if [ -x "$rep" ]; then
-      "$rep" "$OUTDIR" || echo "[!] reporter failed"
-    else
-      echo "[!] reporter not found or not executable; skipping module summary"
-    fi
+make_stub_report() {
+  cat > "$REPORTDIR/index.html" <<'HTML'
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Lantern Report</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;margin:24px;max-width:1100px}h1{margin:0 0 .25em}hr{margin:1.5em 0}</style>
+<h1>Lantern Report</h1>
+<p>This is a minimal report stub. Module summaries are appended below.</p>
+<hr>
+HTML
+}
+
+report_ready=false
+if [ -s "$REPORTDIR/targetedXML" ] && [ -n "$NMAP_XSL" ] && [ -f "$NMAP_XSL" ] && command -v xsltproc >/dev/null 2>&1; then
+  if xsltproc -o "$REPORTDIR/index.html" "$NMAP_XSL" "$REPORTDIR/targetedXML" >/dev/null 2>&1; then
+    report_ready=true
   else
-    echo "[!] nmap.xsl stylesheet not found; cannot generate HTML"
+    echo "[!] xsltproc failed; falling back to minimal HTML stub"
   fi
 else
-  echo "[!] targetedXML missing or empty; skipping HTML generation"
+  echo "[!] nmap.xsl not found or xsltproc missing; creating minimal HTML stub"
+fi
+
+if [ "$report_ready" != true ]; then
+  make_stub_report
+fi
+
+# >>> Append Lantern module summary via reporter <<<
+rep="$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")"/scripts >/dev/null 2>&1 && pwd)/reporter"
+if [ -f "$rep" ]; then
+  bash "$rep" "$OUTDIR" || echo "[!] reporter failed"
+else
+  echo "[!] reporter not found; skipping module summary"
 fi
 
 # Launch a tiny HTTP server to view the report, then exit (server left running in background)
 # serve localhost only on port 9999
-# wait briefly for index.html to appear (fast loop)
+# wait briefly for report/index.html to appear (fast loop)
 for i in $(seq 1 50); do
-  [ -s "$OUTDIR/index.html" ] && break
+  [ -s "$REPORTDIR/index.html" ] && break
   sleep 0.1
 done
 
-if [ -s "$OUTDIR/index.html" ]; then
-  # start server in background, bind to localhost only, disown so lantern exits
-  python3 -m http.server 9999 --bind 127.0.0.1 -d "$OUTDIR" >/dev/null 2>&1 &
+if [ -s "$REPORTDIR/index.html" ]; then
+  # Resolve the *actual* directory that contains index.html and serve from there.
+  SRVFILE="$(realpath "$REPORTDIR/index.html")"
+  SRVDIR="$(dirname "$SRVFILE")"
+
+  # Start a local HTTP server rooted at SRVDIR with directory listing disabled.
+  # This avoids relying on --directory/-d flags and prevents browsing outside index.html.
+  python3 - "$SRVDIR" >/dev/null 2>&1 <<'PY' &
+import os, sys, http.server, socketserver
+root = sys.argv[1]
+os.chdir(root)
+
+class NoListHandler(http.server.SimpleHTTPRequestHandler):
+    # Prevent directory listings even if someone hits the root or a folder directly.
+    def list_directory(self, path):
+        self.send_error(404, "Directory listing disabled")
+        return None
+
+# Bind only to localhost on the chosen port.
+with socketserver.ThreadingTCPServer(("127.0.0.1", 9999), NoListHandler) as httpd:
+    httpd.serve_forever()
+PY
   server_pid=$!
   disown "$server_pid" 2>/dev/null || true
 
-  url="http://127.0.0.1:9999/index.html"
+  url="http://127.0.0.1:9999/report/index.html"
   echo -e "${yellow}[*]${end} ${purple}Report:${end} ${blue}$url${end}"
-
-  # open without blocking; script will end normally while server continues
   ( xdg-open "$url" >/dev/null 2>&1 || /usr/bin/firefox "$url" >/dev/null 2>&1 ) &
 else
-  echo "[!] index.html not found; not starting web server"
+  echo "[!] index.html not found after fallback; not starting web server"
 fi
 
 exit 0
