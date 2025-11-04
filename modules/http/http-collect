@@ -82,9 +82,9 @@ timeout "$CERT_TIMEOUT" bash -c "echo | openssl s_client -connect $IP:$PORT -ser
 
 # 8) whatweb fingerprint (if installed)
 if command -v whatweb >/dev/null 2>&1; then
-  whatweb -v "http://$IP:$PORT/" > "$DEST/whatweb.txt" 2>&1 || true
+  whatweb -v --color=never "http://$IP:$PORT/" > "$DEST/whatweb.txt" 2>&1 || true
 else
-  printf "[info] whatweb not installed; skipping\n" > "$DEST/whatweb.txt"
+  printf "[info] whatweb not installed; skipping\n" > "$DEST/whatweb.html"
 fi
 
 # 9) quick parsed summary file (one-line each): hosts found, emails found

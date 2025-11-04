@@ -40,8 +40,8 @@ echo -e "\n${yellow}[*]${end} ${purple}Scanning ports on${end} ${blue}$target${e
 sudo /usr/bin/nmap \
   -p- --open -sS -n -Pn \
   --min-rate 2500 \
-  --max-retries 2 \
-  -T4 \
+  --max-retries 1 \
+  -T3 \
   -oG "$OUTDIR/allPorts" \
   "$target" >/dev/null 2>&1
 
