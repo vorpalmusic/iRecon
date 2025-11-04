@@ -20,7 +20,7 @@ mkdir -p "$FRAGDIR"
 insert_before_body_close() {
   local src_html="$1"
   local insert_file="$2"
-  local tmp="${src_html}.tmp$$"
+  local tmp="${src_html}.tmp.$$"
   awk -v frag="$(cat "$insert_file")" '
     BEGIN{done=0}
     {
@@ -32,6 +32,43 @@ insert_before_body_close() {
 }
 
 html_escape() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
+
+emit_links() {
+  local sep=""
+  for item in "$@"; do
+    [ -n "$item" ] || continue
+    printf "%s%s" "$sep" "$item"
+    sep=" | "
+  done
+}
+
+safe_count() {
+  local f="$1"
+  [ -s "$f" ] && wc -l < "$f" 2>/dev/null || echo 0
+}
+
+safe_size() {
+  local f="$1"
+  if [ -e "$f" ]; then
+    stat -c%s "$f" 2>/dev/null || wc -c < "$f" 2>/dev/null || echo 0
+  else
+    echo 0
+  fi
+}
+
+# Build an <a> tag if the path exists.
+# mode=nonempty (default) requires non-empty file; mode=allow_empty links even 0-byte files.
+make_link_if() {
+  local label="$1" relpath="$2" mode="${3:-nonempty}"
+  local abspath="$OUTDIR/$relpath"
+  if [ "$mode" = "allow_empty" ]; then
+    [ -e "$abspath" ] || return 0
+  else
+    [ -s "$abspath" ] || return 0
+  fi
+  # Relpath is already relative to index.html; do NOT rewrite it.
+  printf '<a href="%s">%s</a>' "$relpath" "$label"
+}
 
 # ---------------- HTTP summary fragment (10-http.html) ----------------
 build_http_fragment() {
@@ -45,11 +82,9 @@ build_http_fragment() {
     return
   fi
 
-  shopt -u nullglob
-  set +e
-  ports=( "$OUTDIR"/http/* )
-  set -e
   shopt -s nullglob
+  local ports=( "$OUTDIR"/http/* )
+  shopt -u nullglob
 
   if [ ${#ports[@]} -eq 0 ]; then
     echo '<p><em>No HTTP artifacts found.</em></p>' >> "$frag"
@@ -58,30 +93,65 @@ build_http_fragment() {
 
   for portdir in "${ports[@]}"; do
     [ -d "$portdir" ] || continue
+    local port title esc_title
     port="$(basename "$portdir")"
-    title="$(tr -d '\r\n' < "$portdir/title.txt" 2>/dev/null || true)"
-    [ -n "$title" ] || title="(no title)"
+
+    # title (guard the redirect—no stderr if missing)
+    if [ -s "$portdir/title.txt" ]; then
+      title="$(tr -d '\r\n' < "$portdir/title.txt")"
+    else
+      title="(no title collected)"
+    fi
     esc_title="$(printf '%s' "$title" | html_escape)"
 
-    hosts_count="$(wc -l < "$portdir/hosts_from_body.txt" 2>/dev/null || echo 0)"
-    emails_count="$(wc -l < "$portdir/emails.txt" 2>/dev/null || echo 0)"
-    body_sz="$(stat -c%s "$portdir/body.html" 2>/dev/null || echo 0)"
+    # counts/sizes
+    local hosts_count emails_count body_html_sz body_json_sz
+    hosts_count="$(safe_count "$portdir/hosts_from_body.txt")"
+    emails_count="$(safe_count "$portdir/emails.txt")"
+    body_html_sz="$(safe_size "$portdir/body.html")"
+    body_json_sz="$(safe_size "$portdir/body.json")"
+
+    # curated links first (only if they exist)
+    local link_items=()
+    link_items+=("$(make_link_if 'body.html'   "http/$port/body.html")")
+    link_items+=("$(make_link_if 'body.json'   "http/$port/body.json" allow_empty)")
+    link_items+=("$(make_link_if 'headers'     "http/$port/headers.txt")")
+    link_items+=("$(make_link_if 'robots'      "http/$port/robots.txt")")
+    link_items+=("$(make_link_if 'sitemap'     "http/$port/sitemap.xml")")
+    link_items+=("$(make_link_if 'whatweb'     "http/$port/whatweb.txt")")
+    link_items+=("$(make_link_if 'emails'      "http/$port/emails.txt")")
+    link_items+=("$(make_link_if 'hosts'       "http/$port/hosts_from_body.txt")")
+    link_items+=("$(make_link_if 'cert'        "http/$port/cert.txt")")
+
+    # auto-discover any other files (skip title.txt; avoid duplicates)
+    local extra_items=()
+    shopt -s nullglob
+    for fpath in "$portdir"/*; do
+      [ -f "$fpath" ] || continue
+      local bn rel
+      bn="$(basename "$fpath")"
+      [ "$bn" = "title.txt" ] && continue
+      case "$bn" in
+        body.html|body.json|headers.txt|robots.txt|sitemap.xml|whatweb.txt|emails.txt|hosts_from_body.txt|cert.txt)
+          continue
+          ;;
+      esac
+      rel="http/$port/$bn"
+      extra_items+=( "$(make_link_if "$bn" "$rel" allow_empty)" )
+    done
+    shopt -u nullglob
+
+    local links
+    links="$(emit_links "${link_items[@]}" "${extra_items[@]}")"
 
     cat >> "$frag" <<PORT
 <div class="lantern-port">
   <h4>Port <code>$port</code> — $esc_title</h4>
   <div class="lantern-meta">
-    hosts_from_body: $hosts_count &nbsp;•&nbsp; emails: $emails_count &nbsp;•&nbsp; body bytes: $body_sz
+    hosts_from_body: $hosts_count &nbsp;•&nbsp; emails: $emails_count &nbsp;•&nbsp; body.html bytes: $body_html_sz &nbsp;•&nbsp; body.json bytes: $body_json_sz
   </div>
   <div class="lantern-files">
-    <a href="http/$port/body.html">body</a> &nbsp;|&nbsp;
-    <a href="http/$port/headers.txt">headers</a> &nbsp;|&nbsp;
-    <a href="http/$port/robots.txt">robots</a> &nbsp;|&nbsp;
-    <a href="http/$port/sitemap.xml">sitemap</a> &nbsp;|&nbsp;
-    <a href="http/$port/whatweb.txt">whatweb</a> &nbsp;|&nbsp;
-    <a href="http/$port/emails.txt">emails</a> &nbsp;|&nbsp;
-    <a href="http/$port/hosts_from_body.txt">hosts</a> &nbsp;|&nbsp;
-    <a href="http/$port/cert.txt">cert</a>
+    ${links:-<em>No per-port artifacts present.</em>}
   </div>
 </div>
 PORT
@@ -105,10 +175,8 @@ cat > "$TMP" <<'HEAD'
   <h2>Lantern Modules</h2>
 HEAD
 
-# Build current fragments (HTTP for now)
 build_http_fragment
 
-# Concat fragments in order
 if compgen -G "$FRAGDIR"/* >/dev/null; then
   for f in $(ls -1v "$FRAGDIR"/*); do
     echo "<section class=\"lantern-fragment\" id=\"$(basename "$f" | sed 's/[^a-zA-Z0-9_-]/_/g')\">" >> "$TMP"
@@ -121,7 +189,6 @@ fi
 
 echo "</section>" >> "$TMP"
 
-# Inject
 insert_before_body_close "$IDX" "$TMP"
 rm -f "$TMP"
 
