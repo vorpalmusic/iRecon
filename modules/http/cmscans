@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# cmscans — detect CMS from existing http-collect artifacts and run targeted scans
+# Usage: cmscans OUTDIR IP PORT
+set -euo pipefail
+
+OUTDIR="${1:-}"; IP="${2:-}"; PORT="${3:-}"
+if [ -z "$OUTDIR" ] || [ -z "$IP" ] || [ -z "$PORT" ]; then
+  echo "Usage: $0 OUTDIR IP PORT" >&2
+  exit 2
+fi
+
+DEST="$OUTDIR/http/$PORT"
+[ -d "$DEST" ] || { echo "[!] cmscans: $DEST missing; run http-collect first." >&2; exit 1; }
+
+# artifacts we already have
+BODY="$DEST/body.html"
+HEADERS="$DEST/headers.txt"
+ABOUT="$DEST/about.html"
+CONTACT="$DEST/contact.html"
+ROBOTS="$DEST/robots.txt"
+SITEMAP="$DEST/sitemap.xml"
+WHATWEB="$DEST/whatweb.txt"
+
+file_has()     { [ -s "$2" ] && grep -qiE -- "$1" "$2" 2>/dev/null; }
+any_file_has() { local rx="$1"; shift; local f; for f in "$@"; do file_has "$rx" "$f" && return 0; done; return 1; }
+
+# ---------- detection (filesystem-only) ----------
+wp=0
+logbuf="[*] CMS scan (fs-only) $IP:$PORT"$'\n'
+
+file_has '\bWordPress\b' "$WHATWEB" && { wp=1; logbuf+=$'[+] whatweb indicates WordPress\n'; }
+any_file_has 'name=["'\'']generator["'\''][^>]*content=["'\'']WordPress' "$BODY" "$ABOUT" "$CONTACT" && { wp=1; logbuf+=$'[+] meta generator WordPress\n'; }
+any_file_has '/wp-content/|/wp-includes/' "$BODY" "$ABOUT" "$CONTACT" && { wp=1; logbuf+=$'[+] HTML contains wp-content/wp-includes\n'; }
+file_has '(^|\s)X-Powered-By:\s*WordPress\b' "$HEADERS" && { wp=1; logbuf+=$'[+] Header X-Powered-By: WordPress\n'; }
+file_has '(^|\s)Link:\s*<[^>]*api\.w\.org[^>]*>' "$HEADERS" && { wp=1; logbuf+=$'[+] Header Link: …api.w.org…\n'; }
+file_has 'wp-admin' "$ROBOTS" && { wp=1; logbuf+=$'[+] robots.txt references wp-admin\n'; }
+file_has 'wp-sitemap\.xml' "$SITEMAP" && { wp=1; logbuf+=$'[+] sitemap references wp-sitemap.xml\n'; }
+
+# Only proceed if a CMS (WordPress) was detected
+if [ "$wp" -eq 1 ]; then
+  CMSDIR="$DEST/cms"
+  WPDIR="$CMSDIR/wordpress"
+  mkdir -p "$WPDIR"
+  printf '%s\n' "wordpress" > "$CMSDIR/detected.txt"
+  printf '%s' "$logbuf" > "$CMSDIR/_cms-detect.log"
+
+  if command -v wpscan >/dev/null 2>&1; then
+    URL="http://$IP:$PORT/"
+    OUT_TXT="$WPDIR/wpscan.txt"
+
+    echo "[*] CMS: WordPress detected on ${IP}:${PORT} — running WPScan (quick mode)."
+    wpscan --url "$URL" --no-update --no-banner --format cli 1>"$OUT_TXT" || true
+
+    # create a short summary for reporter
+    {
+      echo "WPScan summary:"
+      grep -E 'Interesting Finding:|Vulnerable|[0-9]+ plugin|[0-9]+ theme' "$OUT_TXT" 2>/dev/null || true
+    } > "$WPDIR/summary.txt"
+
+
+    echo "[*] CMS: WPScan finished for ${IP}:${PORT}. Artifacts: http/${PORT}/cms/wordpress/"
+  else
+    echo "wpscan not installed" > "$WPDIR/NOTICE.txt" 2>/dev/null || true
+  fi
+
+  echo "cms-scan:$CMSDIR"
+  echo "wordpress: yes"
+else
+  # No CMS → create nothing and stay silent
+  exit 0
+fi

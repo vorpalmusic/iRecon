@@ -158,6 +158,64 @@ PORT
   done
 }
 
+# ---------------- CMS findings fragment (20-cms.html) ----------------
+build_cms_fragment() {
+  local frag="$FRAGDIR/20-cms.html"
+  # Find cms dirs like http/<PORT>/cms
+  mapfile -d '' cms_dirs < <(find "$OUTDIR/http" -maxdepth 2 -type d -name cms -print0 2>/dev/null || true)
+  # If none, do nothing (no fragment created)
+  [ ${#cms_dirs[@]} -eq 0 ] && return 0
+
+  # Keep only cms dirs that actually have a detected.txt (non-empty)
+  local qualified=()
+  for cmsdir in "${cms_dirs[@]}"; do
+    [ -s "$cmsdir/detected.txt" ] && qualified+=("$cmsdir")
+  done
+  [ ${#qualified[@]} -eq 0 ] && return 0
+
+  : > "$frag"
+  echo '<h3>CMS Findings</h3>' >> "$frag"
+
+  for cmsdir in "${qualified[@]}"; do
+    local port detected
+    port="$(basename "$(dirname "$cmsdir")")"              # http/<PORT>/cms
+    detected="$(tr -d '\r' < "$cmsdir/detected.txt" | head -n1)"
+
+    # Per-port card
+    {
+      echo "<div class=\"lantern-port\">"
+      echo "  <h4>Port <code>$port</code></h4>"
+      echo "  <div class=\"lantern-meta\"><strong>Detected:</strong> $(printf '%s' "$detected" | html_escape)</div>"
+    } >> "$frag"
+
+    case "$detected" in
+      wordpress)
+        wdir="http/$port/cms/wordpress"
+        links=()
+        links+=("$(make_link_if 'summary.txt' "$wdir/summary.txt")")
+        links+=("$(make_link_if 'wpscan.txt'   "$wdir/wpscan.txt")")
+        links+=("$(make_link_if 'wpscan.json'  "$wdir/wpscan.json")")
+        # Render links (only those that exist)
+        if printf '%s' "${links[*]}" | grep -q '[^[:space:]]'; then
+          echo "  <div class=\"lantern-files\">$(emit_links "${links[@]}")</div>" >> "$frag"
+        fi
+        # Optional inline preview of summary
+        if [ -s "$OUTDIR/$wdir/summary.txt" ]; then
+          echo "  <details style=\"margin-top:.4rem\"><summary>Preview summary.txt</summary><pre>" >> "$frag"
+          tail -n 200 "$OUTDIR/$wdir/summary.txt" | html_escape >> "$frag"
+          echo "  </pre></details>" >> "$frag"
+        fi
+        ;;
+      *)
+        # Future CMS types go here
+        :
+        ;;
+    esac
+
+    echo "</div>" >> "$frag"
+  done
+}
+
 # ---------------- assemble & inject ----------------
 TMP="$(mktemp)"
 cat > "$TMP" <<'HEAD'
@@ -176,6 +234,7 @@ cat > "$TMP" <<'HEAD'
 HEAD
 
 build_http_fragment
+build_cms_fragment
 
 if compgen -G "$FRAGDIR"/* >/dev/null; then
   for f in $(ls -1v "$FRAGDIR"/*); do

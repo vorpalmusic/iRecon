@@ -90,15 +90,15 @@ eval "$("$MODDIR/http/http-detect" "$OUTDIR" "$IP")"
 echo -e "${yellow}[*]${end} ${purple}HTTP candidates:${end} ${blue}${HTTP_CAND:-<none>}${end}"
 echo -e "${yellow}[*]${end} ${purple}Verified HTTP ports:${end} ${blue}${HTTP_VERIFIED:-<none>}${end}"
 
-# --- http-collect for verified HTTP ports (minimal & robust) ---
+### http-collect
 if [ -n "${HTTP_VERIFIED:-}" ]; then
   for p in $(echo "${HTTP_VERIFIED}" | tr ',' ' '); do
-    p="${p//[^0-9]/}"
-    [ -z "$p" ] && continue
+    p="${p//[^0-9]/}"; [ -z "$p" ] && continue
+
     "$MODDIR/http/http-collect" "$OUTDIR" "$IP" "$p" >/dev/null 2>&1 || true
   done
 fi
-# --- end collection ---
+# --- end ---
 
 # --- show emails we scraped from the HTTP bodies (if any) ---
 emails_tmp="$OUTDIR/.emails.tmp"
@@ -135,6 +135,15 @@ if [ -n "$added" ]; then
 else
   echo -e "${yellow}[*]${end} ${purple}No new /etc/hosts entries needed.${end}"
 fi
+
+# --- CMS scans (run after enrich and hosts setup) ---
+if [ -n "${HTTP_VERIFIED:-}" ]; then
+  for p in $(echo "${HTTP_VERIFIED}" | tr ',' ' '); do
+    p="${p//[^0-9]/}"; [ -z "$p" ] && continue
+    "$MODDIR/http/cmscans" "$OUTDIR" "$IP" "$p" || true
+  done
+fi
+# --- end CMS scans ---
 
 # ... generate HTML deep dive
 # Robust stylesheet resolution: honor env if provided, else use common paths
