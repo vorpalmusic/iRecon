@@ -1,7 +1,7 @@
 <img width="687" height="207" alt="lantern-logo-color" src="https://github.com/user-attachments/assets/c7d56e1d-e62a-490a-b19b-6cc3e1e87ecb" />
 
 
-Lantern began as a fork of a small nmap wrapper called iRecon ("an automated Nmap-based reconnaissance script designed to speed up the initial enumeration phase during CTFs or real-world pentests"). That script is small but was apparently the inspiration I needed. I envison 'lantern' now as a kind of external "linpeas"--for intitial information gathering in a pentest.
+Lantern began as a fork of a small nmap wrapper called iRecon ("an automated Nmap-based reconnaissance script designed to speed up the initial enumeration phase during CTFs or real-world pentests"). That script is small but was apparently the inspiration I needed. Lantern is shaping up to be a thorough diagnostic tool, starting with nmap but going into web crawling, CMS detection and scanning and the like, all automatically while you work on other things, and assembling everything into a clear web report.
 
 Find the original iRecon repo here--this little script inspired the current work: https://github.com/gzzcoo/iRecon
 
@@ -14,14 +14,15 @@ sudo apt install nmap xsltproc python3 wget bat firefox-esr lolcat xclip -y
 ```
 Installing the tool
 ```bash
-wget https://raw.githubusercontent.com/Gzzcoo/iRecon/refs/heads/main/iRecon
-chmod +x iRecon
-sudo mv iRecon /usr/local/bin/iRecon
+git clone https://github.com/vorpalmusic/lantern.git
+sudo cp lantern /usr/local/bin/lantern
 ```
+
+Copying the executable to /usr/local/bin will soon be handled automatically on the first use of the tool, along with other configuration settings.
 
 ## Usage
 ```bash
-iRecon <IP>
+lantern <IP>
 ```
 
 ## 🚀 Features
