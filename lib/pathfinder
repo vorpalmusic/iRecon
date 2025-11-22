@@ -1,0 +1,11 @@
+#!/bin/bash
+
+# Resolve helper dir (modules) relative to this script, works via symlink
+ROOTDIR=$rootdir
+MODDIR="$(cd -- "$ROOTDIR/modules" && pwd -P)"
+LISTDIR="$(cd -- "$ROOTDIR/lists" && pwd -P)"
+
+# Keep OUTDIR under the caller's current operating dir
+BASEDIR="$(pwd)"
+OUTDIR="${BASEDIR}/$target"
+REPORTDIR="${OUTDIR}/report"

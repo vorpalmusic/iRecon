@@ -1,39 +1,27 @@
 #!/bin/bash
 # author: JackDaw
 
-## VARIABLE BLOCK
-yellow="\e[33m"
-blue="\e[34m"
-gray="\e[90m"
-end="\e[0m"
-purple="\e[0;35m\033[1m"
+### GRAB IP 'target' AND ROOT DIRECTORY, THEN CALL PATHFINDER TO SET ALL RELATIVE PATH VARS
+target="$1"
+rootdir="$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")" >/dev/null 2>&1 && pwd)"
+. $rootdir/lib/pathfinder
 
+## LOAD LIBRARIES
+. "$ROOTDIR/lib/colors"
+
+## IF TARGET IP IS MISSING, GIVE ERROR ASKING FOR IT
 if [ -z "$1" ]; then
     echo -e "\n${yellow}[!]${end} ${purple}Usage:${end} ${blue}$0 <IP>${end}"
     exit 1
 fi
 
-target="$1"
-
-# Resolve helper dir (modules) relative to this script, works via symlink
-MODDIR="$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")"/modules >/dev/null 2>&1 && pwd)"
-
-# Keep OUTDIR under the caller's current dir (your original behavior)
-BASEDIR="$(pwd)"
-OUTDIR="${BASEDIR}/$target"
-
-# Project root = parent of modules; lists live there
-ROOTDIR="$(cd -- "$MODDIR/.." && pwd -P)"
-LISTDIR="${ROOTDIR}/lists"
-
-### END VARAIBLE DECLARATION
-### SCRIPT BEGINS THE WORK
-
+## MAKE OUTPUT FOLDER BASED ON TARGET IP
 mkdir -p "$OUTDIR"
 echo -e "${yellow}[*]${end} ${purple}Using output directory:${end} ${blue}$OUTDIR${end}"
 
 "$MODDIR/banner"        ## cue banner
 
+## BEGIN WORK.
 ### run fast discovery scan just to find open ports (no live verbose spam)
 echo -e "\n${yellow}[*]${end} ${purple}Scanning ports on${end} ${blue}$target${end}${purple}...${end}\n"
 
@@ -65,28 +53,23 @@ else
 fi
 
 ### grab all those ports from the nmap scan and put them in a list
-IP="$target"
 ports=$(grep -oP '\d{1,5}/open' "$OUTDIR/allPorts" | cut -d '/' -f1 | xargs | tr ' ' ',')
 
-echo -e "\n${yellow}[*]${end} ${purple}Extracting information...${end}\n" > extractPorts.tmp
-echo -e "\t${yellow}[*]${end} ${purple}IP Address:${end} ${blue}$IP${end}" >> extractPorts.tmp
-echo -e "\t${yellow}[*]${end} ${purple}Open ports:${end} ${blue}$ports${end}\n" >> extractPorts.tmp
-echo "$ports" | tr -d '\n' | xclip -sel clip
-echo -e "${yellow}[*]${end} ${purple}Ports copied to clipboard${end}" >> extractPorts.tmp
-/usr/bin/batcat --style=plain --paging=never extractPorts.tmp
-rm extractPorts.tmp
+echo -e "\n${yellow}[*]${end} ${purple}Extracting information...${end}\n"
+echo -e "\t${yellow}[*]${end} ${purple}IP Address:${end} ${blue}$target${end}"
+echo -e "\t${yellow}[*]${end} ${purple}Open ports:${end} ${blue}$ports${end}\n"
 
 # --- targeted scan (only if we have ports) ---
 if [ -n "$ports" ]; then
   echo -e "\n${yellow}[*]${end} ${purple}Version and Service Scanning...${end}"
-  sudo /usr/bin/nmap -sCV -p"$ports" -n -Pn --max-retries 2 --host-timeout 120s "$IP" -A \
+  sudo /usr/bin/nmap -sCV -p"$ports" -n -Pn --max-retries 2 --host-timeout 120s "$target" -A \
        -oN "$OUTDIR/targeted" -oX "$OUTDIR/targetedXML" >/dev/null 2>&1
 else
   echo -e "${yellow}[!]${end} ${purple}No open ports detected; skipping targeted scan.${end}"
 fi
 
 ### http-detect
-eval "$("$MODDIR/http/http-detect" "$OUTDIR" "$IP")"
+eval "$("$MODDIR/http/http-detect" "$OUTDIR" "$target")"
 echo -e "${yellow}[*]${end} ${purple}HTTP candidates:${end} ${blue}${HTTP_CAND:-<none>}${end}"
 echo -e "${yellow}[*]${end} ${purple}Verified HTTP ports:${end} ${blue}${HTTP_VERIFIED:-<none>}${end}"
 
@@ -95,7 +78,7 @@ if [ -n "${HTTP_VERIFIED:-}" ]; then
   for p in $(echo "${HTTP_VERIFIED}" | tr ',' ' '); do
     p="${p//[^0-9]/}"; [ -z "$p" ] && continue
 
-    "$MODDIR/http/http-collect" "$OUTDIR" "$IP" "$p" >/dev/null 2>&1 || true
+    "$MODDIR/http/http-collect" "$OUTDIR" "$target" "$p" >/dev/null 2>&1 || true
   done
 fi
 # --- end ---
@@ -120,7 +103,7 @@ rm -f "$emails_tmp"
 # --- end emails summary ---
 
 # assume HTTP_CAND contains e.g. s3.thetoppers.htb and HTTP_VERIFIED contains ports
-target_hint="${HTTP_CAND:-$IP}"
+target_hint="${HTTP_CAND:-$target}"
 found_hosts="$("$MODDIR/http/enrich" "$OUTDIR" "$target_hint" --max 200)"
 echo -e "${yellow}[*]${end} ${purple}Domains found:${end}"
 echo "$found_hosts" | sed '/^$/d' | while IFS= read -r h; do
@@ -128,7 +111,7 @@ echo "$found_hosts" | sed '/^$/d' | while IFS= read -r h; do
 done
 
 # --- Add /etc/hosts entries ONCE (denylist-aware) ---
-added="$(sudo bash "$MODDIR/http/add-hosts" "$OUTDIR" "$IP" "${HTTP_VERIFIED:-}" --deny-file "$LISTDIR/deny-domains")"
+added="$(sudo bash "$MODDIR/http/add-hosts" "$OUTDIR" "$target" "${HTTP_VERIFIED:-}" --deny-file "$LISTDIR/deny-domains")"
 if [ -n "$added" ]; then
   echo -e "${yellow}[*]${end} ${purple}Hosts added to /etc/hosts:${end}"
   echo "$added"
@@ -140,7 +123,7 @@ fi
 if [ -n "${HTTP_VERIFIED:-}" ]; then
   for p in $(echo "${HTTP_VERIFIED}" | tr ',' ' '); do
     p="${p//[^0-9]/}"; [ -z "$p" ] && continue
-    "$MODDIR/http/cmscans" "$OUTDIR" "$IP" "$p" || true
+    "$MODDIR/http/cmscans" "$OUTDIR" "$target" "$p" || true
   done
 fi
 # --- end CMS scans ---
@@ -200,10 +183,9 @@ if [ -s "$OUTDIR/index.html" ]; then
   if ! kill -0 "$server_pid" 2>/dev/null; then
     echo "[!] http.server failed to start on 127.0.0.1:9999 (likely EADDRINUSE or bad args)."
     echo "    Try: python3 -m http.server 9999 --bind 127.0.0.1 -d \"$OUTDIR\" (without redirection) to see stderr."
-  exit 1
+    exit 1
   fi
   disown "$server_pid" 2>/dev/null || true
-
 
   url="http://127.0.0.1:9999/index.html"
   echo -e "${yellow}[*]${end} ${purple}Report:${end} ${blue}$url${end}"

@@ -1,0 +1,9 @@
+# lib/colors
+red="\e[31m"
+green="\e[32m"
+yellow="\e[33m"
+blue="\e[34m"
+purple="\e[35m"
+cyan="\e[36m"
+gray="\e[90m"
+end="\e[0m"
