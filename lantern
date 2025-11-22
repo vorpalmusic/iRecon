@@ -4,7 +4,7 @@
 ### GRAB IP 'target' AND ROOT DIRECTORY, THEN CALL PATHFINDER TO SET ALL RELATIVE PATH VARS
 target="$1"
 rootdir="$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")" >/dev/null 2>&1 && pwd)"
-. $rootdir/lib/pathfinder
+. "$rootdir/lib/pathfinder"
 
 ## LOAD LIBRARIES
 . "$ROOTDIR/lib/colors"
@@ -15,8 +15,8 @@ if [ -z "$1" ]; then
     exit 1
 fi
 
-## MAKE OUTPUT FOLDER BASED ON TARGET IP
-mkdir -p "$OUTDIR"
+## MAKE OUTPUT FOLDER BASED ON TARGET IP + REPORT SUBFOLDER
+mkdir -p "$OUTDIR" "$REPORTDIR"
 echo -e "${yellow}[*]${end} ${purple}Using output directory:${end} ${blue}$OUTDIR${end}"
 
 "$MODDIR/banner"        ## cue banner
@@ -25,18 +25,20 @@ echo -e "${yellow}[*]${end} ${purple}Using output directory:${end} ${blue}$OUTDI
 ### run fast discovery scan just to find open ports (no live verbose spam)
 echo -e "\n${yellow}[*]${end} ${purple}Scanning ports on${end} ${blue}$target${end}${purple}...${end}\n"
 
+ALLPORTS="$REPORTDIR/allPorts"
+
 sudo /usr/bin/nmap \
   -p- --open -sS -n -Pn \
   --min-rate 2500 \
   --max-retries 1 \
   -T3 \
-  -oG "$OUTDIR/allPorts" \
+  -oG "$ALLPORTS" \
   "$target" >/dev/null 2>&1
 
 # If greppable file exists, extract ports reliably and print them once
-if [ -f "$OUTDIR/allPorts" ]; then
+if [ -f "$ALLPORTS" ]; then
   # extract unique port numbers (e.g. 22, 80)
-  discovered_ports=$(grep -oP '\d{1,5}/open' "$OUTDIR/allPorts" | cut -d'/' -f1 | sort -n -u)
+  discovered_ports=$(grep -oP '\d{1,5}/open' "$ALLPORTS" | cut -d'/' -f1 | sort -n -u)
 
   if [ -n "$discovered_ports" ]; then
     echo -e "${yellow}[*]${end} ${purple}Discovered open ports:${end}"
@@ -49,21 +51,26 @@ if [ -f "$OUTDIR/allPorts" ]; then
     echo -e "${yellow}[!]${end} ${purple}No open ports discovered in greppable output.${end}"
   fi
 else
-  echo -e "${yellow}[!]${end} ${purple}Nmap greppable output missing: $OUTDIR/allPorts${end}"
+  echo -e "${yellow}[!]${end} ${purple}Nmap greppable output missing: $ALLPORTS${end}"
 fi
 
 ### grab all those ports from the nmap scan and put them in a list
-ports=$(grep -oP '\d{1,5}/open' "$OUTDIR/allPorts" | cut -d '/' -f1 | xargs | tr ' ' ',')
+ports=""
+if [ -f "$ALLPORTS" ]; then
+  ports=$(grep -oP '\d{1,5}/open' "$ALLPORTS" | cut -d '/' -f1 | xargs | tr ' ' ',')
+fi
 
 echo -e "\n${yellow}[*]${end} ${purple}Extracting information...${end}\n"
 echo -e "\t${yellow}[*]${end} ${purple}IP Address:${end} ${blue}$target${end}"
-echo -e "\t${yellow}[*]${end} ${purple}Open ports:${end} ${blue}$ports${end}\n"
+echo -e "\t${yellow}[*]${end} ${purple}Open ports:${end} ${blue}${ports:-<none>}${end}\n"
 
 # --- targeted scan (only if we have ports) ---
+TARGETED_XML="$REPORTDIR/targetedXML"
+
 if [ -n "$ports" ]; then
   echo -e "\n${yellow}[*]${end} ${purple}Version and Service Scanning...${end}"
   sudo /usr/bin/nmap -sCV -p"$ports" -n -Pn --max-retries 2 --host-timeout 120s "$target" -A \
-       -oN "$OUTDIR/targeted" -oX "$OUTDIR/targetedXML" >/dev/null 2>&1
+       -oX "$TARGETED_XML" >/dev/null 2>&1
 else
   echo -e "${yellow}[!]${end} ${purple}No open ports detected; skipping targeted scan.${end}"
 fi
@@ -135,11 +142,13 @@ if [ ! -f "$NMAP_XSL" ]; then
   NMAP_XSL="$(find /usr/local/share /usr/share /opt -type f -name nmap.xsl 2>/dev/null | head -n1 || true)"
 fi
 
-if [ -s "$OUTDIR/targetedXML" ]; then
+REPORT_HTML="$REPORTDIR/index.html"
+
+if [ -s "$TARGETED_XML" ]; then
   if [ -n "$NMAP_XSL" ] && [ -f "$NMAP_XSL" ]; then
-    xsltproc -o "$OUTDIR/index.html" "$NMAP_XSL" "$OUTDIR/targetedXML" || echo "[!] xsltproc failed"
+    xsltproc -o "$REPORT_HTML" "$NMAP_XSL" "$TARGETED_XML" || echo "[!] xsltproc failed"
     # >>> Append Lantern module summary via reporter <<<
-    rep="$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")"/scripts >/dev/null 2>&1 && pwd)/reporter"
+    rep="$ROOTDIR/scripts/reporter"
     if [ -x "$rep" ]; then
       "$rep" "$OUTDIR" || echo "[!] reporter failed"
     else
@@ -156,11 +165,11 @@ fi
 
 # wait briefly for index.html to appear (fast loop)
 for i in $(seq 1 50); do
-  [ -s "$OUTDIR/index.html" ] && break
+  [ -s "$REPORT_HTML" ] && break
   sleep 0.1
 done
 
-if [ -s "$OUTDIR/index.html" ]; then
+if [ -s "$REPORT_HTML" ]; then
   # 1) Ensure no stale server is hogging 9999 (port conflicts cause silent failures)
   if command -v lsof >/dev/null 2>&1; then
     stale_pids="$(lsof -tiTCP:9999 -sTCP:LISTEN 2>/dev/null || true)"
@@ -175,7 +184,7 @@ if [ -s "$OUTDIR/index.html" ]; then
     [ -n "$stale_pids" ] && { echo "[*] Cleaning up existing server(s) on 9999: $stale_pids"; kill $stale_pids 2>/dev/null || true; sleep 0.2; }
   fi
 
-  # 2) Start a fresh server rooted at OUTDIR (short flag -d as you prefer)
+  # 2) Start a fresh server rooted at OUTDIR (so /http/... and /report/... both work)
   python3 -m http.server 9999 --bind 127.0.0.1 -d "$OUTDIR" >/dev/null 2>&1 &
   server_pid=$!
   # give it a brief moment to fail fast if it will
@@ -187,13 +196,15 @@ if [ -s "$OUTDIR/index.html" ]; then
   fi
   disown "$server_pid" 2>/dev/null || true
 
-  url="http://127.0.0.1:9999/index.html"
+  # index.html lives under report/
+  url="http://127.0.0.1:9999/report/index.html"
+
   echo -e "${yellow}[*]${end} ${purple}Report:${end} ${blue}$url${end}"
 
   # 3) Sanity check: confirm the server is serving THIS file (not an old docroot)
   if command -v curl >/dev/null 2>&1; then
     # Compare sizes as a cheap fingerprint
-    local_sz=$(wc -c < "$OUTDIR/index.html" 2>/dev/null || echo 0)
+    local_sz=$(wc -c < "$REPORT_HTML" 2>/dev/null || echo 0)
     remote_sz=$(curl -fsSI "$url" | awk 'tolower($1)=="content-length:"{print $2}' | tr -d '\r' )
     if [ -n "$remote_sz" ] && [ "$remote_sz" != "$local_sz" ]; then
       echo "[!] Warning: server on 9999 is not serving the expected index.html (size $remote_sz vs $local_sz)."

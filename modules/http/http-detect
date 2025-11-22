@@ -17,8 +17,7 @@ if [ -z "$OUTDIR" ] || [ -z "$IP" ]; then
   exit 2
 fi
 
-xml_file="$OUTDIR/targetedXML"
-txt_file="$OUTDIR/targeted"
+xml_file="$OUTDIR/report/targetedXML"
 
 HTTP_CAND=""
 HTTP_VERIFIED=""
@@ -41,7 +40,7 @@ probe_ports() {
   fi
 }
 
-# Probe-mode: uses provided PORTS; prints only assignments on stdout
+# Probe-mode: uses provided PORTS; prints only assignments
 if [ -n "$PORTS_ARG" ]; then
   HTTP_VERIFIED="$(probe_ports "$IP" "$PORTS_ARG")"
   printf "HTTP_CAND='%s'\nHTTP_VERIFIED='%s'\n" \
@@ -49,29 +48,36 @@ if [ -n "$PORTS_ARG" ]; then
   exit 0
 fi
 
-# XML/text mode
-if [ -s "$xml_file" ]; then
-  if ! grep -q "<host" "$xml_file" 2>/dev/null && ! grep -q 'hosts up="[^0]' "$xml_file" 2>/dev/null; then
-    [ $VERBOSE -eq 1 ] && echo "[warn] $xml_file has no hosts; consider -Pn or probe-mode." >&2
-  fi
+# ---------------------------
+#   REQUIRED DEPENDENCIES
+# ---------------------------
+
+# 1) xmlstarlet required
+if ! command -v xmlstarlet >/dev/null 2>&1; then
+  echo "[http-detect] ERROR: xmlstarlet is not installed. Install it with: sudo apt install xmlstarlet" >&2
+  printf "HTTP_CAND=''\nHTTP_VERIFIED=''\n"
+  exit 0
 fi
 
-if command -v xmlstarlet >/dev/null 2>&1 && [ -s "$xml_file" ]; then
-  HTTP_CAND=$(
-    xmlstarlet sel -t -m "//port[state/@state='open' and service]" \
-      -v "concat(@portid,':',service/@name)" -n "$xml_file" 2>/dev/null \
-    | tr '[:upper:]' '[:lower:]' \
-    | egrep -i 'http|ssl/http|https' 2>/dev/null \
-    | cut -d: -f1 \
-    | paste -s -d, - 2>/dev/null || true
-  )
-elif [ -s "$txt_file" ]; then
-  HTTP_CAND=$(
-    grep -iP '^\d{1,5}/tcp\s+open\s+\S+' "$txt_file" 2>/dev/null \
-    | awk '{ for(i=1;i<=NF;i++) if(tolower($i) ~ /http|https|ssl\/http/) { split($1,p,"/"); printf p[1]","; break } }' \
-    | sed 's/,$//'
-  )
+# 2) XML must exist
+if [ ! -s "$xml_file" ]; then
+  echo "[http-detect] ERROR: XML file missing or empty: $xml_file" >&2
+  printf "HTTP_CAND=''\nHTTP_VERIFIED=''\n"
+  exit 0
 fi
+
+# ---------------------------
+#     XML-ONLY PROCESSING
+# ---------------------------
+
+HTTP_CAND=$(
+  xmlstarlet sel -t -m "//port[state/@state='open' and service]" \
+    -v "concat(@portid,':',service/@name)" -n "$xml_file" 2>/dev/null \
+  | tr '[:upper:]' '[:lower:]' \
+  | egrep -i 'http|ssl/http|https' 2>/dev/null \
+  | cut -d: -f1 \
+  | paste -s -d, - 2>/dev/null || true
+)
 
 if [ $VERBOSE -eq 1 ] && [ -n "$HTTP_CAND" ]; then
   echo "[*] detect-http candidates: $HTTP_CAND" >&2

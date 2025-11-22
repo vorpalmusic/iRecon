@@ -6,50 +6,54 @@
 # Output: newline-separated hostnames
 set -euo pipefail
 
-OUTDIR="${1:-}"; TARGET="${2:-}"
-MAX="${3:-}"   # optional numeric max if you want to cap crt.sh output; pass e.g. "--max 50"
+OUTDIR="${1:-}"
+TARGET="${2:-}"
+MAX=""           # optional numeric max
 FAST_PASSIVE=0
-
-# simple args parsing for flags
-i=3
-while [ $i -le "$#" ]; do
-  arg="${!i:-}"
-  case "$arg" in
-    --max) i=$((i+1)); MAX="${!i:-}";;
-    --fast-passive) FAST_PASSIVE=1;;
-    *) ;;
-  esac
-  i=$((i+1))
-done
 
 if [ -z "$OUTDIR" ] || [ -z "$TARGET" ]; then
   echo "Usage: $0 OUTDIR TARGET [--max N] [--fast-passive]" >&2
   exit 2
 fi
 
-# helpers
-safe_jq() {
-  command -v jq >/dev/null 2>&1 || return 1
-  jq "$@"
-}
+# simple args parsing for flags (start at 3rd arg)
+i=3
+while [ $i -le "$#" ]; do
+  arg="${!i:-}"
+  case "$arg" in
+    --max)
+      i=$((i+1))
+      MAX="${!i:-}"
+      ;;
+    --fast-passive)
+      FAST_PASSIVE=1
+      ;;
+    *)
+      ;;
+  esac
+  i=$((i+1))
+done
 
 # store results in a temp file then dedupe and print
 tmpf="$(mktemp)"
-trap 'rm -f "$tmpf"' EXIT
+trap 'rm -f "$tmpf" "${tmpf}.out"' EXIT
 
 # 1) parse local cert files (best first)
 if [ -d "$OUTDIR/http" ]; then
   while IFS= read -r certfile; do
     [ -s "$certfile" ] || continue
     # grab lines with DNS: and extract DNS names
-    grep -i 'DNS:' "$certfile" 2>/dev/null | sed -E 's/.*DNS:([^, ).]*).*/\1/Ip' | sed 's/^\*\.//; s/ //g' >> "$tmpf" || true
+    grep -i 'DNS:' "$certfile" 2>/dev/null \
+      | sed -E 's/.*DNS:([^, ).]*).*/\1/Ip' \
+      | sed 's/^\*\.//; s/ //g' >> "$tmpf" || true
   done < <(find "$OUTDIR/http" -maxdepth 2 -type f -name 'cert.txt' 2>/dev/null || true)
 fi
 
 # 2) parse hosts_from_body files (collected pages)
 while IFS= read -r hf; do
   [ -s "$hf" ] || continue
-  sed -n '1,10000p' "$hf" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' >> "$tmpf" || true
+  sed -n '1,10000p' "$hf" \
+    | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' >> "$tmpf" || true
 done < <(find "$OUTDIR/http" -maxdepth 2 -type f -name 'hosts_from_body.txt' 2>/dev/null || true)
 
 # 3) if TARGET looks like a domain (not IP), do crt.sh query (passive, low-noise)
@@ -61,30 +65,23 @@ fi
 if [ "$is_ip" -eq 0 ]; then
   # query crt.sh for this domain only if we have network access and jq
   if command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
-    # small, polite query; use %25.domain to get subdomains
     qry="%25.$TARGET"
-    # timeout and small window
     crt_json="$(curl -sS --max-time 12 "https://crt.sh/?q=${qry}&output=json" 2>/dev/null || true)"
     if [ -n "$crt_json" ]; then
-      # parse name_value entries; this can include duplicates and wildcard entries
-      echo "$crt_json" | jq -r '.[].name_value' 2>/dev/null \
-        | sed 's/\*\.//g' | tr 'A-Z' 'a-z' >> "$tmpf" || true
+      echo "$crt_json" \
+        | jq -r '.[].name_value' 2>/dev/null \
+        | sed 's/\*\.//g' \
+        | tr 'A-Z' 'a-z' >> "$tmpf" || true
     fi
-  else
-    # either curl or jq missing; skip crt.sh
-    :
   fi
 fi
 
 # 4) optional: fast passive subfinder (if installed and requested)
-# subfinder -silent is fairly quiet and fast if you have it; only run on demand
 if [ "$FAST_PASSIVE" -eq 1 ] && command -v subfinder >/dev/null 2>&1; then
-  # run in silent mode and append results (limit not applied here)
   subfinder -d "$TARGET" -silent 2>/dev/null >> "$tmpf" || true
 fi
 
 # normalize, filter, dedupe, and enforce MAX if requested
-# keep only FQDN-like strings and remove bare IPs
 grep -E -o '([a-zA-Z0-9][-a-zA-Z0-9]*\.)+[a-zA-Z]{2,}' "$tmpf" 2>/dev/null \
   | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' \
   | sed 's/^\.//; s/\.$//' \

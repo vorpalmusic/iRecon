@@ -7,9 +7,10 @@ if [ -z "$OUTDIR" ] || [ ! -d "$OUTDIR" ]; then
   exit 2
 fi
 
-IDX="$OUTDIR/index.html"
+# index.html now lives under OUTDIR/report/
+IDX="$OUTDIR/report/index.html"
 if [ ! -f "$IDX" ]; then
-  echo "[!] index.html not found in $OUTDIR; skipping reporter"
+  echo "[!] index.html not found in $OUTDIR/report; skipping reporter"
   exit 0
 fi
 
@@ -57,6 +58,8 @@ safe_size() {
 }
 
 # Build an <a> tag if the path exists.
+# relpath is relative to OUTDIR (e.g. "http/80/body.html")
+# index.html lives at OUTDIR/report/index.html, so links must be "../$relpath"
 # mode=nonempty (default) requires non-empty file; mode=allow_empty links even 0-byte files.
 make_link_if() {
   local label="$1" relpath="$2" mode="${3:-nonempty}"
@@ -66,8 +69,7 @@ make_link_if() {
   else
     [ -s "$abspath" ] || return 0
   fi
-  # Relpath is already relative to index.html; do NOT rewrite it.
-  printf '<a href="%s">%s</a>' "$relpath" "$label"
+  printf '<a href="../%s">%s</a>' "$relpath" "$label"
 }
 
 # ---------------- HTTP summary fragment (10-http.html) ----------------
@@ -96,7 +98,6 @@ build_http_fragment() {
     local port title esc_title
     port="$(basename "$portdir")"
 
-    # title (guard the redirect—no stderr if missing)
     if [ -s "$portdir/title.txt" ]; then
       title="$(tr -d '\r\n' < "$portdir/title.txt")"
     else
@@ -104,14 +105,12 @@ build_http_fragment() {
     fi
     esc_title="$(printf '%s' "$title" | html_escape)"
 
-    # counts/sizes
     local hosts_count emails_count body_html_sz body_json_sz
     hosts_count="$(safe_count "$portdir/hosts_from_body.txt")"
     emails_count="$(safe_count "$portdir/emails.txt")"
     body_html_sz="$(safe_size "$portdir/body.html")"
     body_json_sz="$(safe_size "$portdir/body.json")"
 
-    # curated links first (only if they exist)
     local link_items=()
     link_items+=("$(make_link_if 'body.html'   "http/$port/body.html")")
     link_items+=("$(make_link_if 'body.json'   "http/$port/body.json" allow_empty)")
@@ -123,7 +122,6 @@ build_http_fragment() {
     link_items+=("$(make_link_if 'hosts'       "http/$port/hosts_from_body.txt")")
     link_items+=("$(make_link_if 'cert'        "http/$port/cert.txt")")
 
-    # auto-discover any other files (skip title.txt; avoid duplicates)
     local extra_items=()
     shopt -s nullglob
     for fpath in "$portdir"/*; do
@@ -161,12 +159,9 @@ PORT
 # ---------------- CMS findings fragment (20-cms.html) ----------------
 build_cms_fragment() {
   local frag="$FRAGDIR/20-cms.html"
-  # Find cms dirs like http/<PORT>/cms
   mapfile -d '' cms_dirs < <(find "$OUTDIR/http" -maxdepth 2 -type d -name cms -print0 2>/dev/null || true)
-  # If none, do nothing (no fragment created)
   [ ${#cms_dirs[@]} -eq 0 ] && return 0
 
-  # Keep only cms dirs that actually have a detected.txt (non-empty)
   local qualified=()
   for cmsdir in "${cms_dirs[@]}"; do
     [ -s "$cmsdir/detected.txt" ] && qualified+=("$cmsdir")
@@ -178,10 +173,9 @@ build_cms_fragment() {
 
   for cmsdir in "${qualified[@]}"; do
     local port detected
-    port="$(basename "$(dirname "$cmsdir")")"              # http/<PORT>/cms
+    port="$(basename "$(dirname "$cmsdir")")"
     detected="$(tr -d '\r' < "$cmsdir/detected.txt" | head -n1)"
 
-    # Per-port card
     {
       echo "<div class=\"lantern-port\">"
       echo "  <h4>Port <code>$port</code></h4>"
@@ -195,11 +189,9 @@ build_cms_fragment() {
         links+=("$(make_link_if 'summary.txt' "$wdir/summary.txt")")
         links+=("$(make_link_if 'wpscan.txt'   "$wdir/wpscan.txt")")
         links+=("$(make_link_if 'wpscan.json'  "$wdir/wpscan.json")")
-        # Render links (only those that exist)
-        if printf '%s' "${links[*]}" | grep -q '[^[:space:]]'; then
+        if printf '%s\n' "${links[*]}" | grep -q '[^[:space:]]'; then
           echo "  <div class=\"lantern-files\">$(emit_links "${links[@]}")</div>" >> "$frag"
         fi
-        # Optional inline preview of summary
         if [ -s "$OUTDIR/$wdir/summary.txt" ]; then
           echo "  <details style=\"margin-top:.4rem\"><summary>Preview summary.txt</summary><pre>" >> "$frag"
           tail -n 200 "$OUTDIR/$wdir/summary.txt" | html_escape >> "$frag"
@@ -207,7 +199,6 @@ build_cms_fragment() {
         fi
         ;;
       *)
-        # Future CMS types go here
         :
         ;;
     esac
