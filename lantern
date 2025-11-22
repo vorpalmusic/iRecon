@@ -118,7 +118,7 @@ echo "$found_hosts" | sed '/^$/d' | while IFS= read -r h; do
 done
 
 # --- Add /etc/hosts entries ONCE (denylist-aware) ---
-added="$(sudo bash "$MODDIR/http/add-hosts" "$OUTDIR" "$target" "${HTTP_VERIFIED:-}" --deny-file "$LISTDIR/deny-domains")"
+added="$(sudo bash "$ROOTDIR/scripts/add-hosts" "$OUTDIR" "$target" "${HTTP_VERIFIED:-}" --deny-file "$LISTDIR/deny-domains")"
 if [ -n "$added" ]; then
   echo -e "${yellow}[*]${end} ${purple}Hosts added to /etc/hosts:${end}"
   echo "$added"

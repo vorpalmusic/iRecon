@@ -166,23 +166,12 @@ ARGS=("$@")
 ALLOW_REGEX=""
 VERBOSE=0
 
-# default deny file: modules/http/add-hosts → ../../lists/deny-domains
+# default deny file:
+#   script location: lantern/scripts/add-hosts
+#   deny list:       lantern/lists/deny-domains
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
-DENY_FILE_DEFAULT="$SCRIPT_DIR/../../lists/deny-domains"
+DENY_FILE_DEFAULT="$SCRIPT_DIR/../lists/deny-domains"
 DENY_FILE="${ADD_HOSTS_DENY:-$DENY_FILE_DEFAULT}"
-
-# parse tail flags (leave PORTS_ARG as-is)
-i=0
-while [ $i -lt "${#ARGS[@]}" ]; do
-  a="${ARGS[$i]}"
-  case "$a" in
-    --dry-run)      DRY_RUN=1; i=$((i+1));;
-    --allow-regex)  i=$((i+1)); ALLOW_REGEX="${ARGS[$i]:-}"; i=$((i+1));;
-    --deny-file)    i=$((i+1)); DENY_FILE="${ARGS[$i]:-}"; i=$((i+1));;
-    --verbose)      VERBOSE=1; i=$((i+1));;
-    *)              i=$((i+1));;  # ignore unknown tail args
-  esac
-done
 
 # XML now comes from OUTDIR/report/
 xml="$OUTDIR/report/targetedXML"
@@ -212,24 +201,57 @@ is_denied() {
   return 1
 }
 
+# Add one candidate hostname → map[name]=ip after all filters
+add_candidate() {
+  local nm="$1"
+  local ip="$2"
+
+  [[ -z "$nm" ]] && return 0
+  nm="${nm%.}"   # drop trailing dot if any
+
+  # require domain-ish token, skip bare IPs etc.
+  if ! [[ "$nm" =~ $DOMAIN_RE ]]; then
+    return 0
+  fi
+
+  [[ "$nm" =~ ^(localhost|ip6-localhost|ip6-loopback)$ ]] && return 0
+
+  if [ -n "$ALLOW_REGEX" ] && ! [[ "$nm" =~ $ALLOW_REGEX ]]; then
+    [ $VERBOSE -eq 1 ] && echo "[skip] $nm (allow-regex rejects)" >&2
+    return 0
+  fi
+  if is_denied "$nm"; then
+    [ $VERBOSE -eq 1 ] && echo "[deny] $nm (denylist)" >&2
+    return 0
+  fi
+
+  [[ -z "${map[$nm]+x}" ]] && map["$nm"]="$ip"
+}
+
+# generic: scan a file for DOMAIN_RE tokens and add them
+scan_file_for_domains() {
+  local file="$1"
+  local ip="$2"
+  [ -s "$file" ] || return 0
+
+  while IFS= read -r nm; do
+    add_candidate "$nm" "$ip"
+  done < <(grep -oE "$DOMAIN_RE" "$file" 2>/dev/null | sort -u)
+}
+
 declare -A map=()   # name -> ip
 
-# ---------- 1) Extract from XML (Nmap) ----------
+# ---------- 1a) Extract hostnames from XML (Nmap <hostnames>) ----------
 if command -v xmlstarlet >/dev/null 2>&1; then
   if [ -s "$xml" ]; then
     while IFS= read -r line; do
       ippart="${line%% *}"
       namespart="${line#* }"
+      [ -z "$ippart" ] && continue
       for nm in $namespart; do
         [[ -z "$nm" ]] && continue
-        [[ "$nm" =~ ^(localhost|ip6-localhost|ip6-loopback)$ ]] && continue
-        if [ -n "$ALLOW_REGEX" ] && ! [[ "$nm" =~ $ALLOW_REGEX ]]; then
-          [ $VERBOSE -eq 1 ] && echo "[skip] $nm (allow-regex rejects)" >&2; continue
-        fi
-        if is_denied "$nm"; then
-          [ $VERBOSE -eq 1 ] && echo "[deny] $nm (denylist)" >&2; continue
-        fi
-        [[ -z "${map[$nm]+x}" ]] && map["$nm"]="$ippart"
+        nm="${nm%.}"  # strip trailing dots
+        add_candidate "$nm" "$ippart"
       done
     done < <(
       xmlstarlet sel -t -m "//host[status/@state='up']" \
@@ -244,101 +266,84 @@ else
   [ $VERBOSE -eq 1 ] && echo "[info] xmlstarlet not installed; skipping Nmap hostname extraction" >&2
 fi
 
-# ---------- 2) Probe provided ports for hostnames ----------
-probe_ports_to_names() {
-  local ip="$1" ports="$2"
-  local -a found=()
-  ports="${ports//,/ }"
-  for p in $ports; do
-    p="${p//[^0-9]/}"; [ -z "$p" ] && continue
-    headers="$(curl -sI --max-time 5 "http://$ip:$p/" 2>/dev/null || true)"
-    [ -z "$headers" ] && headers="$(curl -k -sI --max-time 5 "https://$ip:$p/" 2>/dev/null || true)"
+# ---------- 1b) Extract FQDN-like tokens from Nmap script outputs ----------
+# This is where we pick up things like "dc01.example.com" from smb-os-discovery, etc.
+if command -v xmlstarlet >/dev/null 2>&1 && [ -s "$xml" ]; then
+  while IFS= read -r line; do
+    ippart="${line%% *}"
+    payload="${line#* }"
+    [ -z "$ippart" ] && continue
+    [ -z "$payload" ] && continue
 
-    # Location headers → hostnames
-    while IFS= read -r loc; do
-      host="$(echo "$loc" | sed -nE "s/Location:[[:space:]]*https?:\/\/($DOMAIN_RE)(.+)?/\1/ip; t; s/.*Location:[[:space:]]*([a-zA-Z0-9.-]+).*/\1/p" | tr -d '\r')"
-      [ -n "$host" ] && [[ "$host" =~ $DOMAIN_RE ]] && found+=("$host")
-    done < <(echo "$headers" | grep -i '^Location:' || true)
-
-    # body
-    body="$(curl -sL --max-time 6 "http://$ip:$p/" 2>/dev/null || true)"
-    [ -z "$body" ] && body="$(curl -k -sL --max-time 6 "https://$ip:$p/" 2>/dev/null || true)"
-
-    if [ -n "$body" ]; then
-      # Just grab hostnames from absolute URLs in the body
-      while IFS= read -r token; do
-        hosttok="$(echo "$token" | sed -nE "s#https?://($DOMAIN_RE).*#\1#Ip")"
-        [ -n "$hosttok" ] && found+=("$hosttok")
-      done < <(printf '%s\n' "$body" | grep -oE "https?://[^\"' ><]+" || true)
-    fi
-
-    # TLS SANs for common TLS-ish ports or when we see HSTS
-    if [[ "$p" =~ ^(443|8443|9443)$ ]] || echo "$headers" | grep -qi 'strict-transport-security'; then
-      cert_txt="$(timeout 4 openssl s_client -connect "$ip:$p" -servername "$ip" </dev/null 2>/dev/null | openssl x509 -noout -text 2>/dev/null || true)"
-      if [ -n "$cert_txt" ]; then
-        while IFS= read -r sanline; do
-          san="$(echo "$sanline" | sed -nE "s/.*DNS:($DOMAIN_RE).*/\1/Ip")"
-          [ -n "$san" ] && found+=("$san")
-        done < <(echo "$cert_txt" | grep -i 'DNS:' || true)
-      fi
-    fi
-  done
-
-  if [ "${#found[@]}" -gt 0 ]; then
-    printf "%s\n" "${found[@]}" | awk '!x[$0]++{print}'
-  fi
-}
-
-if [ -n "${PORTS_ARG:-}" ]; then
-  probe_names="$(probe_ports_to_names "$IP" "$PORTS_ARG" || true)"
-  if [ -n "$probe_names" ]; then
     while IFS= read -r nm; do
-      [[ -z "$nm" ]] && continue
-      [[ "$nm" =~ ^(localhost|ip6-localhost|ip6-loopback)$ ]] && continue
-      if [ -n "$ALLOW_REGEX" ] && ! [[ "$nm" =~ $ALLOW_REGEX ]]; then
-        [ $VERBOSE -eq 1 ] && echo "[skip] $nm (allow-regex rejects)" >&2; continue
-      fi
-      if is_denied "$nm"; then
-        [ $VERBOSE -eq 1 ] && echo "[deny] $nm (denylist)" >&2; continue
-      fi
-      [[ -z "${map[$nm]+x}" ]] && map["$nm"]="$IP"
-    done <<< "$probe_names"
-  fi
+      add_candidate "$nm" "$ippart"
+    done < <(printf '%s\n' "$payload" | grep -oE "$DOMAIN_RE" | sort -u || true)
+  done < <(
+    xmlstarlet sel -t \
+      -m "//host[status/@state='up']" \
+        -v "address/@addr" -o " " \
+        -m ".//script" -v "@output" -o " " -b -n "$xml" 2>/dev/null \
+    | sed -E 's/[[:space:]]+/ /g; s/ $//'
+  )
 fi
 
-# --- harvest domains from http-collected emails and verify via Host header ---
+# ---------- 2) Harvest domains from HTTP artifacts under OUTDIR/report/http ----------
+HTTP_ROOT="$OUTDIR/report/http"
+if [ -d "$HTTP_ROOT" ]; then
+  # Each port has its own dir: OUTDIR/report/http/<port>/
+  while IFS= read -r portdir; do
+    [ -d "$portdir" ] || continue
+
+    # 2a) Headers (Location:, etc.) — just treat any header domains as candidates
+    scan_file_for_domains "$portdir/headers.txt" "$IP"
+
+    # 2b) Hosts extracted from body (hosts_from_body.txt)
+    scan_file_for_domains "$portdir/hosts_from_body.txt" "$IP"
+
+    # 2c) Certificate SANs from cert.txt (DNS: entries)
+    cert_file="$portdir/cert.txt"
+    if [ -s "$cert_file" ]; then
+      while IFS= read -r nm; do
+        add_candidate "$nm" "$IP"
+      done < <(grep -oiE "DNS:$DOMAIN_RE" "$cert_file" 2>/dev/null \
+               | sed -E 's/^DNS://I' \
+               | sort -u)
+    fi
+
+  done < <(find "$HTTP_ROOT" -mindepth 1 -maxdepth 1 -type d 2>/dev/null || true)
+fi
+
+# --- 3) harvest domains from http-collected emails and verify via Host header ---
 if [ -n "${PORTS_ARG:-}" ]; then
   email_domains_file="$(mktemp)"
   trap 'rm -f "$email_domains_file"' EXIT
+
+  # web artifacts now live under OUTDIR/report/http
   while IFS= read -r ef; do
     [ -s "$ef" ] || continue
     awk -F'@' '{if (NF>=2) print $NF}' "$ef" \
       | tr 'A-Z' 'a-z' \
       | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' \
       >> "$email_domains_file"
-  done < <(find "$OUTDIR/http" -maxdepth 2 -type f -name 'emails.txt' 2>/dev/null || true)
+  done < <(find "$HTTP_ROOT" -maxdepth 2 -type f -name 'emails.txt' 2>/dev/null || true)
 
   if [ -s "$email_domains_file" ]; then
     while IFS= read -r dom; do
       [[ -z "$dom" ]] && continue
+      dom="${dom%.}"  # strip trailing dot
+
       verified_hit=0
       for p in $(echo "$PORTS_ARG" | tr ',' ' '); do
         p="${p//[^0-9]/}"; [ -z "$p" ] && continue
-        if curl -sI --max-time 4 -H "Host: $dom" "http://$IP:$p/" | head -n1 | grep -qE 'HTTP/[0-9.]+\ [12][0-9]{2}|HTTP/[0-9.]+\ 3[0-9]{2}'; then
+        if curl -sI --max-time 4 -H "Host: $dom" "http://$IP:$p/" \
+          | head -n1 \
+          | grep -qE 'HTTP/[0-9.]+\ [12][0-9]{2}|HTTP/[0-9.]+\ 3[0-9]{2}'; then
           verified_hit=1
           break
         fi
       done
       if [ "$verified_hit" -eq 1 ]; then
-        if [ -n "$ALLOW_REGEX" ] && ! [[ "$dom" =~ $ALLOW_REGEX ]]; then
-          [ $VERBOSE -eq 1 ] && echo "[skip] $dom (allow-regex rejects)" >&2
-          continue
-        fi
-        if is_denied "$dom"; then
-          [ $VERBOSE -eq 1 ] && echo "[deny] $dom (denylist)" >&2
-          continue
-        fi
-        [[ -z "${map[$dom]+x}" ]] && map["$dom"]="$IP"
+        add_candidate "$dom" "$IP"
       fi
     done < <(sort -u "$email_domains_file")
   fi
@@ -350,6 +355,7 @@ fi
 for name in "${!map[@]}"; do
   ip="${map[$name]}"
   [[ "$name" =~ ^(localhost|ip6-localhost|ip6-loopback)$ ]] && continue
+  [[ "$name" == "$ip" ]] && continue   # skip IP → IP noise
 
   if upsert_host_entry "$ip" "$name"; then
     [ "$DRY_RUN" -eq 0 ] && echo "Ensured ${name} → ${ip}"
